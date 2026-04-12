@@ -1,0 +1,22 @@
+{
+  "name": "nomgamez-backend",
+  "version": "2.0.0",
+  "description": "NOM-BET — BTC-first gaming & prediction market platform on Zenon Network",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "axios": "^1.6.0",
+    "znn-ts-sdk": "github:dexter703/znn-ts-sdk",
+    "twitter-api-v2": "^1.15.0",
+    "node-telegram-bot-api": "^0.64.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  }
+}

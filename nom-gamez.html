@@ -1,0 +1,1415 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NOM-BET — Provably Fair Crypto Gaming &amp; Prediction Markets</title>
+<meta name="description" content="Bet BTC on real crypto events. Play provably fair games. No accounts, no KYC, instant payouts.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=VT323:wght@400&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#050a05;--panel:#0a0f0a;--border:#1a2e1a;
+  --green:#00ff41;--green2:#00cc33;--green3:#006618;
+  --dim:#4a7a4a;--text:#c8e6c8;--muted:#5a8a5a;
+  --yellow:#ffd700;--orange:#ff8800;--red:#ff3333;--blue:#4488ff;
+  --btc:#f7931a;--win:#00ff88;
+  --font-mono:'Share Tech Mono',monospace;--font-vt:'VT323',monospace;
+  --glow:0 0 10px rgba(0,255,65,.4);--glow-btc:0 0 10px rgba(247,147,26,.4);
+}
+html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--font-mono);overflow-x:hidden}
+a{color:var(--green);text-decoration:none}
+button{cursor:pointer;font-family:var(--font-mono);border:none;background:none}
+input,select{font-family:var(--font-mono)}
+canvas{display:block}
+::-webkit-scrollbar{width:6px}
+::-webkit-scrollbar-track{background:var(--bg)}
+::-webkit-scrollbar-thumb{background:var(--green3)}
+
+/* TICKER */
+#ticker{position:fixed;top:0;left:0;right:0;z-index:100;background:#000;border-bottom:1px solid var(--green3);height:32px;display:flex;align-items:center;overflow:hidden}
+#ticker-inner{display:flex;gap:40px;white-space:nowrap;font-size:11px;color:var(--dim);padding-left:100%;animation:tickScroll 50s linear infinite}
+#ticker-inner span{color:var(--green)}
+#ticker-inner .up{color:var(--win)}
+#ticker-inner .dn{color:var(--red)}
+@keyframes tickScroll{from{transform:translateX(0)}to{transform:translateX(-100%)}}
+
+/* HEADER */
+#header{margin-top:32px;background:var(--panel);border-bottom:1px solid var(--border);padding:0 24px;height:54px;display:flex;align-items:center;justify-content:space-between}
+#logo{font-family:var(--font-vt);font-size:28px;color:var(--green);letter-spacing:4px;text-shadow:var(--glow)}
+#logo em{color:var(--btc);font-style:normal}
+#nav{display:flex;gap:4px}
+.nav-btn{padding:6px 14px;font-size:11px;letter-spacing:1px;color:var(--dim);border:1px solid transparent;transition:all .15s}
+.nav-btn:hover,.nav-btn.active{color:var(--green);border-color:var(--green3);background:rgba(0,255,65,.05)}
+#hdr-right{display:flex;align-items:center;gap:12px}
+#online-pill{font-size:11px;color:var(--dim)}
+#online-pill b{color:var(--win)}
+#connect-btn{padding:7px 16px;font-size:11px;letter-spacing:1px;border:1px solid var(--btc);color:var(--btc);background:rgba(247,147,26,.06);transition:all .15s}
+#connect-btn:hover{background:rgba(247,147,26,.15);box-shadow:var(--glow-btc)}
+
+/* HERO */
+#hero{padding:60px 24px 44px;text-align:center;border-bottom:1px solid var(--border);background:radial-gradient(ellipse at 50% 0%,rgba(0,255,65,.04) 0%,transparent 70%)}
+#hero h1{font-family:var(--font-vt);font-size:clamp(40px,6vw,70px);color:var(--green);line-height:1;margin-bottom:14px;text-shadow:var(--glow)}
+#hero h1 .btc{color:var(--btc);text-shadow:var(--glow-btc)}
+#hero-sub{font-size:13px;color:var(--muted);max-width:460px;margin:0 auto 32px;line-height:1.7}
+#hero-pills{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-bottom:36px}
+.pill{padding:4px 14px;font-size:11px;border:1px solid var(--border);color:var(--dim);border-radius:2px}
+.pill.lit{border-color:var(--green3);color:var(--green);background:rgba(0,255,65,.04)}
+#hero-cta{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
+.cta{padding:13px 30px;font-size:13px;letter-spacing:2px;border:1px solid;transition:all .15s}
+.cta-p{color:var(--bg);background:var(--btc);border-color:var(--btc);font-weight:700}
+.cta-p:hover{background:#ffaa33;box-shadow:var(--glow-btc)}
+.cta-s{color:var(--green);border-color:var(--green3);background:rgba(0,255,65,.05)}
+.cta-s:hover{background:rgba(0,255,65,.1);box-shadow:var(--glow)}
+#trust-strip{display:flex;gap:28px;justify-content:center;margin-top:36px;flex-wrap:wrap}
+.trust-item{font-size:11px;color:var(--dim)}
+.trust-item b{color:var(--text)}
+
+/* LIVE BAR */
+#live-bar{background:#000;border-bottom:1px solid var(--border);padding:7px 24px;display:flex;align-items:center;gap:14px;overflow:hidden}
+#live-badge{flex-shrink:0;font-size:10px;color:#000;background:var(--win);padding:2px 8px;letter-spacing:2px}
+#feed-wrap{flex:1;overflow:hidden;height:20px}
+.feed-line{font-size:11px;color:var(--dim);white-space:nowrap;height:20px;line-height:20px}
+.feed-line .hl{color:var(--win)}
+.feed-line .bhl{color:var(--btc)}
+.feed-line .mhl{color:var(--blue)}
+
+/* LAYOUT */
+#main{display:grid;grid-template-columns:1fr 310px;gap:0;max-width:1180px;margin:0 auto;padding:0 24px}
+#content{padding:28px 28px 28px 0;border-right:1px solid var(--border)}
+#sidebar{padding:28px 0 28px 28px}
+@media(max-width:880px){#main{grid-template-columns:1fr}#content{padding:20px 0;border-right:none;border-bottom:1px solid var(--border)}#sidebar{padding:20px 0}}
+
+/* SECTION TITLE */
+.sec-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+.sec-title{font-family:var(--font-vt);font-size:22px;color:var(--green);letter-spacing:2px}
+.sec-sub{font-size:11px;color:var(--muted)}
+
+/* MARKET CARDS */
+#market-grid{display:flex;flex-direction:column;gap:10px;margin-bottom:8px}
+.mkt-card{background:var(--panel);border:1px solid var(--border);padding:16px;transition:border-color .15s,box-shadow .15s}
+.mkt-card:hover{border-color:var(--green3);box-shadow:var(--glow)}
+.mkt-q{font-size:14px;color:var(--text);margin-bottom:11px;line-height:1.4}
+.mkt-meta{display:flex;align-items:center;gap:7px;margin-bottom:11px;flex-wrap:wrap}
+.mkt-tag{font-size:10px;padding:2px 8px;border:1px solid var(--border);color:var(--dim);letter-spacing:1px}
+.mkt-tag.price{border-color:var(--btc);color:var(--btc)}
+.mkt-tag.macro{border-color:var(--blue);color:var(--blue)}
+.mkt-time{font-size:11px;color:var(--muted);margin-left:auto}
+.mkt-odds{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:11px}
+.odds-btn{padding:10px;border:1px solid;text-align:center;transition:all .15s;font-size:13px}
+.odds-yes{border-color:var(--win);color:var(--win);background:rgba(0,255,136,.05)}
+.odds-yes:hover{background:rgba(0,255,136,.13);box-shadow:0 0 8px rgba(0,255,136,.3)}
+.odds-no{border-color:var(--red);color:var(--red);background:rgba(255,51,51,.05)}
+.odds-no:hover{background:rgba(255,51,51,.12)}
+.odds-pct{font-size:10px;color:var(--dim);margin-top:2px}
+.mkt-pool{font-size:11px;color:var(--dim)}
+.mkt-pool b{color:var(--text)}
+.mkt-bar{height:3px;background:var(--border);margin-top:10px}
+.mkt-bar-fill{height:100%;background:linear-gradient(90deg,var(--win),var(--red));transition:width .5s}
+.mkt-resolved{opacity:.6}
+.res-badge{display:inline-block;font-size:10px;padding:2px 8px;letter-spacing:1px;margin-bottom:8px}
+.res-yes{background:rgba(0,255,136,.12);color:var(--win);border:1px solid var(--win)}
+.res-no{background:rgba(255,51,51,.12);color:var(--red);border:1px solid var(--red)}
+.empty-state{text-align:center;padding:36px;color:var(--muted);font-size:13px}
+.blink{animation:blink 1s step-end infinite}
+@keyframes blink{50%{opacity:0}}
+
+/* GAME CARDS */
+#game-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px}
+.game-card{background:var(--panel);border:1px solid var(--border);padding:20px;text-align:center;transition:all .15s;position:relative;overflow:hidden}
+.game-card:hover{border-color:var(--green);box-shadow:var(--glow);transform:translateY(-2px)}
+.game-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:var(--green);transform:scaleX(0);transform-origin:left;transition:transform .3s}
+.game-card:hover::before{transform:scaleX(1)}
+.game-art{font-size:38px;margin-bottom:10px;display:block}
+.game-title{font-family:var(--font-vt);font-size:19px;color:var(--green);margin-bottom:5px}
+.game-desc{font-size:11px;color:var(--dim);margin-bottom:12px;line-height:1.5}
+.game-payout{font-size:12px;color:var(--yellow);margin-bottom:12px}
+.game-play-btn{display:block;width:100%;padding:8px;border:1px solid var(--green);color:var(--green);font-size:11px;letter-spacing:2px;transition:all .15s}
+.game-play-btn:hover{background:rgba(0,255,65,.1)}
+
+/* FREE PLAY CARD */
+#fp-card{background:var(--panel);border:1px solid var(--btc);padding:18px;margin-bottom:20px;box-shadow:0 0 18px rgba(247,147,26,.07)}
+#fp-card .fp-t{font-family:var(--font-vt);font-size:21px;color:var(--btc);margin-bottom:7px}
+#fp-card .fp-s{font-size:11px;color:var(--dim);margin-bottom:14px;line-height:1.5}
+#fp-addr{width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);color:var(--text);font-size:11px;margin-bottom:10px;display:none}
+#fp-addr:focus{outline:none;border-color:var(--btc)}
+#fp-btn{width:100%;padding:11px;font-size:12px;letter-spacing:2px;border:1px solid var(--btc);color:var(--bg);background:var(--btc);transition:all .15s}
+#fp-btn:hover:not(:disabled){background:#ffaa33}
+#fp-btn:disabled{opacity:.4;cursor:not-allowed}
+#fp-msg{font-size:11px;color:var(--dim);margin-top:9px;min-height:16px}
+
+/* SIDEBAR */
+.sb-sec{margin-bottom:26px}
+.sb-title{font-family:var(--font-vt);font-size:18px;color:var(--green);letter-spacing:2px;margin-bottom:11px;border-bottom:1px solid var(--border);padding-bottom:7px}
+#act-list{display:flex;flex-direction:column;gap:5px}
+.act-it{font-size:11px;color:var(--dim);line-height:1.4;padding:5px 0;border-bottom:1px solid rgba(26,46,26,.4)}
+.act-it .aw{color:var(--win)}
+.act-it .ab{color:var(--btc)}
+.act-it .am{color:var(--blue)}
+.act-it .at{color:var(--green3);font-size:10px}
+.lb-row{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--dim);padding:5px 0}
+.lb-rank{color:var(--green3);width:18px;text-align:right}
+.lb-addr{flex:1;color:var(--text)}
+.lb-amt{color:var(--yellow)}
+#plat-stats{display:grid;grid-template-columns:1fr 1fr;gap:7px}
+.stat-box{background:rgba(0,255,65,.03);border:1px solid var(--border);padding:9px}
+.stat-lbl{font-size:10px;color:var(--muted);letter-spacing:1px}
+.stat-val{font-family:var(--font-vt);font-size:19px;color:var(--green)}
+.stat-val.bv{color:var(--btc)}
+
+/* HOW IT WORKS */
+.dg-step{display:flex;gap:11px;margin-bottom:10px;font-size:12px;color:var(--dim)}
+.dg-num{color:var(--btc);font-family:var(--font-vt);font-size:18px;flex-shrink:0}
+.dg-text{line-height:1.5}
+
+/* MODALS */
+.modal-ov{position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px}
+.modal{background:var(--panel);border:1px solid var(--border);max-width:500px;width:100%;max-height:90vh;overflow-y:auto}
+.modal-hdr{background:var(--bg);padding:15px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+.modal-title{font-family:var(--font-vt);font-size:21px;color:var(--green)}
+.modal-x{color:var(--dim);font-size:20px;padding:4px 8px;transition:color .15s}
+.modal-x:hover{color:var(--red)}
+.modal-body{padding:20px}
+.m-lbl{font-size:11px;color:var(--muted);letter-spacing:1px;margin-bottom:6px}
+.m-inp{width:100%;padding:10px;background:var(--bg);border:1px solid var(--border);color:var(--text);font-size:12px;font-family:var(--font-mono);transition:border-color .15s;margin-bottom:14px}
+.m-inp:focus{outline:none;border-color:var(--green)}
+.amt-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:14px}
+.amt-btn{padding:8px;border:1px solid var(--border);font-size:12px;color:var(--dim);transition:all .15s}
+.amt-btn:hover,.amt-btn.sel{border-color:var(--green);color:var(--green);background:rgba(0,255,65,.08)}
+.info-row{display:flex;justify-content:space-between;font-size:11px;padding:4px 0;border-bottom:1px solid var(--border)}
+.info-row .lbl{color:var(--muted)}
+.info-row .val{color:var(--text)}
+.info-row .val.w{color:var(--win)}
+.m-btn{width:100%;padding:13px;font-size:13px;letter-spacing:2px;border:1px solid var(--btc);color:var(--bg);background:var(--btc);transition:all .15s;margin-top:10px}
+.m-btn:hover:not(:disabled){background:#ffaa33}
+.m-btn:disabled{opacity:.4;cursor:not-allowed}
+.dep-box{background:var(--bg);border:1px solid var(--green3);padding:13px;margin-bottom:13px}
+.dep-addr{font-size:12px;color:var(--green);word-break:break-all;margin:5px 0}
+.dep-big{font-family:var(--font-vt);font-size:30px;color:var(--btc);margin:7px 0}
+.tx-row{display:flex;gap:8px;margin-top:10px}
+.tx-inp{flex:1;padding:8px;background:var(--bg);border:1px solid var(--border);color:var(--text);font-size:11px;font-family:var(--font-mono)}
+.tx-inp:focus{outline:none;border-color:var(--green)}
+.tx-btn{padding:8px 14px;border:1px solid var(--green);color:var(--green);font-size:11px;transition:all .15s}
+.tx-btn:hover{background:rgba(0,255,65,.1)}
+.st-msg{font-size:12px;padding:9px;border:1px solid;margin-top:8px}
+.st-ok{border-color:var(--win);color:var(--win);background:rgba(0,255,136,.05)}
+.st-err{border-color:var(--red);color:var(--red);background:rgba(255,51,51,.05)}
+.st-wait{border-color:var(--yellow);color:var(--yellow);background:rgba(255,215,0,.05)}
+.side-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px}
+.side-btn{padding:14px;border:1px solid;font-size:13px;text-align:center;transition:all .15s}
+.side-yes{border-color:var(--win);color:var(--win)}
+.side-yes.sel,.side-yes:hover{background:rgba(0,255,136,.12)}
+.side-no{border-color:var(--red);color:var(--red)}
+.side-no.sel,.side-no:hover{background:rgba(255,51,51,.1)}
+
+/* GAME VIEW */
+#game-view{position:fixed;inset:0;background:var(--bg);z-index:500;display:none;flex-direction:column}
+#game-view.vis{display:flex}
+#game-hdr{background:var(--panel);border-bottom:1px solid var(--border);padding:9px 20px;display:flex;align-items:center;gap:14px}
+#game-back{color:var(--dim);font-size:12px;padding:4px 10px;border:1px solid var(--border);transition:all .15s}
+#game-back:hover{color:var(--green);border-color:var(--green)}
+#game-name{font-family:var(--font-vt);font-size:22px;color:var(--green)}
+#game-info{margin-left:auto;font-size:11px;color:var(--dim)}
+#game-body{flex:1;overflow-y:auto}
+
+/* DICE */
+#dice-wrap{padding:24px;max-width:580px;margin:0 auto}
+.d-display{text-align:center;padding:38px 0}
+.d-num{font-family:var(--font-vt);font-size:110px;color:var(--green);text-shadow:var(--glow);line-height:1;transition:color .3s}
+.d-num.w{color:var(--win)}
+.d-num.l{color:var(--red)}
+.d-seed{font-size:10px;color:var(--green3);margin-top:8px;word-break:break-all}
+.dm-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:18px}
+.dm-btn{padding:8px 4px;border:1px solid var(--border);font-size:11px;color:var(--dim);text-align:center;transition:all .15s;line-height:1.3}
+.dm-btn:hover,.dm-btn.act{border-color:var(--green);color:var(--green);background:rgba(0,255,65,.05)}
+.d-info{display:flex;justify-content:space-between;font-size:12px;margin-bottom:14px;padding:10px;background:rgba(0,255,65,.03);border:1px solid var(--border)}
+.roll-btn{width:100%;padding:15px;font-size:15px;letter-spacing:3px;border:1px solid var(--green);color:var(--green);transition:all .2s;margin-bottom:11px}
+.roll-btn:hover:not(:disabled){background:rgba(0,255,65,.1);box-shadow:var(--glow)}
+.roll-btn:disabled{opacity:.4;cursor:not-allowed}
+.d-log{font-size:11px;color:var(--dim);max-height:110px;overflow-y:auto;border:1px solid var(--border);padding:8px}
+.d-log-e{padding:2px 0}
+.d-log-e.w{color:var(--win)}
+.d-log-e.l{color:var(--red)}
+
+/* SLOTS */
+#slots-wrap{padding:24px;max-width:480px;margin:0 auto;text-align:center}
+.slots-machine{background:var(--panel);border:1px solid var(--border);padding:22px;margin-bottom:18px}
+.reels{display:flex;justify-content:center;gap:8px;margin-bottom:18px}
+.reel{width:68px;height:78px;border:1px solid var(--border);background:var(--bg);display:flex;align-items:center;justify-content:center;font-size:34px;overflow:hidden}
+.reel.spin{animation:reelS .1s linear infinite}
+@keyframes reelS{0%{transform:translateY(0)}50%{transform:translateY(-4px)}100%{transform:translateY(0)}}
+.pay-tbl{font-size:10px;color:var(--dim);text-align:left;margin-bottom:14px;border:1px solid var(--border);padding:8px}
+.pay-row{display:flex;justify-content:space-between;padding:2px 0}
+.pay-sym{color:var(--text)}
+.pay-mult{color:var(--yellow)}
+.spin-btn{width:100%;padding:15px;font-size:15px;letter-spacing:3px;border:1px solid var(--green);color:var(--green);transition:all .2s;margin-bottom:11px}
+.spin-btn:hover:not(:disabled){background:rgba(0,255,65,.1);box-shadow:var(--glow)}
+.spin-btn:disabled{opacity:.4;cursor:not-allowed}
+.slots-res{font-family:var(--font-vt);font-size:22px;min-height:30px;color:var(--green)}
+.slots-log{font-size:11px;color:var(--dim);max-height:90px;overflow-y:auto;border:1px solid var(--border);padding:8px;text-align:left}
+
+/* SHOOTER */
+#shooter-wrap{width:100%;height:100%;position:relative}
+#shooter-canvas{width:100%;height:100%}
+#shooter-hud{position:absolute;top:10px;left:10px;right:10px;display:flex;justify-content:space-between;align-items:center;pointer-events:none}
+.hud-p{background:rgba(0,0,0,.7);border:1px solid var(--border);padding:5px 11px;font-size:12px}
+#hud-score{color:var(--green)}
+#hud-wave{color:var(--yellow)}
+#hud-hp{color:var(--win)}
+
+/* GAME OVER */
+#go-ov{position:fixed;inset:0;background:rgba(0,0,0,.9);z-index:900;display:none;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:40px}
+#go-ov.vis{display:flex}
+.go-title{font-family:var(--font-vt);font-size:60px;margin-bottom:14px}
+.go-title.w{color:var(--win);text-shadow:0 0 20px rgba(0,255,136,.5);animation:pulse 1s ease-in-out infinite}
+.go-title.l{color:var(--red)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.7}}
+.go-msg{font-size:14px;color:var(--text);margin-bottom:6px}
+.go-pay{font-family:var(--font-vt);font-size:34px;color:var(--btc);margin-bottom:22px}
+.go-tx{font-size:11px;color:var(--dim);word-break:break-all;margin-bottom:18px;max-width:460px}
+.go-tx a{color:var(--green)}
+.go-btns{display:flex;gap:10px;flex-wrap:wrap;justify-content:center}
+.go-btn{padding:11px 26px;font-size:12px;letter-spacing:2px;border:1px solid;transition:all .15s}
+.go-bp{border-color:var(--btc);color:var(--btc)}
+.go-bp:hover{background:rgba(247,147,26,.1)}
+.go-bs{border-color:var(--green3);color:var(--green)}
+.go-bs:hover{background:rgba(0,255,65,.05)}
+
+/* FOOTER */
+#footer{margin-top:60px;border-top:1px solid var(--border);padding:22px;text-align:center;font-size:11px;color:var(--green3)}
+#footer a{color:var(--dim)}
+#footer a:hover{color:var(--green)}
+
+/* UTILS */
+.hidden{display:none!important}
+.ldots::after{content:'...';animation:ldots 1s step-end infinite}
+@keyframes ldots{0%{content:'.'}33%{content:'..'}66%{content:'...'}}
+</style>
+</head>
+<body>
+
+<!-- TICKER -->
+<div id="ticker">
+  <div id="ticker-inner">
+    <span>BTC</span><span id="tk-btc">...</span>&nbsp;&nbsp;
+    <span>ETH</span><span id="tk-eth">...</span>&nbsp;&nbsp;
+    <span>ZNN</span><span id="tk-znn">...</span>&nbsp;&nbsp;
+    <span id="tk-note">No accounts · No KYC · Provably fair</span>
+  </div>
+</div>
+
+<!-- HEADER -->
+<div id="header">
+  <div id="logo">NOM<em>-BET</em></div>
+  <nav id="nav">
+    <button class="nav-btn active" onclick="goTo('home')">HOME</button>
+    <button class="nav-btn" onclick="goTo('markets')">MARKETS</button>
+    <button class="nav-btn" onclick="goTo('games')">GAMES</button>
+  </nav>
+  <div id="hdr-right">
+    <div id="online-pill"><b id="online-n">—</b> online</div>
+    <button id="connect-btn" onclick="openConn()">CONNECT WALLET</button>
+  </div>
+</div>
+
+<!-- HERO -->
+<div id="hero">
+  <h1>BET WITH <span class="btc">BTC</span>.<br>WIN. NO BS.</h1>
+  <div id="hero-sub">Provably fair games. Real prediction markets. No account, no KYC.<br>Every outcome verifiable on-chain.</div>
+  <div id="hero-pills">
+    <span class="pill lit">✓ BTC accepted</span>
+    <span class="pill lit">✓ No account needed</span>
+    <span class="pill lit">✓ Provably fair RNG</span>
+    <span class="pill">↳ Settles on Zenon Network</span>
+  </div>
+  <div id="hero-cta">
+    <button class="cta cta-p" onclick="scrollTo('fp-card',true)">🎁 FREE PLAY — WIN UP TO 2 ZNN</button>
+    <button class="cta cta-s" onclick="goTo('markets')">📊 VIEW OPEN BETS</button>
+  </div>
+  <div id="trust-strip">
+    <div class="trust-item">Volume: <b id="ts-vol">—</b> ZNN</div>
+    <div class="trust-item">Winners: <b id="ts-wins">—</b></div>
+    <div class="trust-item">Open bets: <b id="ts-mkts">—</b></div>
+    <div class="trust-item">Payout: <b>10×</b></div>
+  </div>
+</div>
+
+<!-- LIVE BAR -->
+<div id="live-bar">
+  <div id="live-badge">LIVE</div>
+  <div id="feed-wrap">
+    <div class="feed-line" id="feed-line">Connecting to platform<span class="ldots"></span></div>
+  </div>
+</div>
+
+<!-- MAIN -->
+<div id="main">
+  <div id="content">
+
+    <!-- MARKETS -->
+    <div id="sec-markets" style="margin-bottom:38px">
+      <div class="sec-hdr">
+        <div class="sec-title">📊 OPEN BETS</div>
+        <div class="sec-sub">Pick YES or NO · stake ZNN · win proportional share</div>
+      </div>
+      <div id="market-grid"><div class="empty-state">Loading markets<span class="blink">_</span></div></div>
+      <div id="mkts-more" class="hidden" style="margin-top:10px;text-align:center">
+        <button class="cta cta-s" style="font-size:12px;padding:8px 20px" onclick="loadMoreMkts()">LOAD MORE</button>
+      </div>
+    </div>
+
+    <!-- GAMES -->
+    <div id="sec-games" style="margin-bottom:38px">
+      <div class="sec-hdr">
+        <div class="sec-title">🎮 GAMES</div>
+        <div class="sec-sub">Bet ZNN · win 10× · provably fair seed</div>
+      </div>
+      <div id="game-grid">
+        <div class="game-card">
+          <span class="game-art">🎲</span>
+          <div class="game-title">HASH DICE</div>
+          <div class="game-desc">Roll d100. Six modes — over/under, lucky 77, jackpot 100, and more.</div>
+          <div class="game-payout">WIN 10× your bet</div>
+          <button class="game-play-btn" onclick="startGame('dice')">PLAY NOW →</button>
+        </div>
+        <div class="game-card">
+          <span class="game-art">🔮</span>
+          <div class="game-title">PLASMA SLOTS</div>
+          <div class="game-desc">7 symbols. 50× jackpot on triple ⬡. Provably seeded spin.</div>
+          <div class="game-payout">UP TO 50× jackpot</div>
+          <button class="game-play-btn" onclick="startGame('slots')">PLAY NOW →</button>
+        </div>
+        <div class="game-card">
+          <span class="game-art">🚀</span>
+          <div class="game-title">SPACE SHOOTER</div>
+          <div class="game-desc">WASD + mouse aim. Survive 5 waves. Verification rebuild in progress.</div>
+          <div class="game-payout">TEMPORARILY DISABLED</div>
+          <button class="game-play-btn" onclick="startGame('shooter')">VERIFICATION SOON</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- RESOLVED -->
+    <div id="sec-resolved">
+      <div class="sec-hdr">
+        <div class="sec-title">📁 RESOLVED</div>
+        <div class="sec-sub">Recently closed markets</div>
+      </div>
+      <div id="resolved-grid"><div class="empty-state" style="font-size:12px;color:var(--muted)">No resolved markets yet.</div></div>
+    </div>
+
+  </div>
+
+  <!-- SIDEBAR -->
+  <div id="sidebar">
+
+    <!-- FREE PLAY -->
+    <div id="fp-card">
+      <div class="fp-t">🎁 DAILY FREE PLAY</div>
+      <div class="fp-s">One free game per day. Win up to 2 ZNN. No deposit required.</div>
+      <input id="fp-addr" type="text" placeholder="Your z1q… address" />
+      <button id="fp-btn" onclick="doFreePlay()">SPIN FOR FREE</button>
+      <div id="fp-msg"></div>
+    </div>
+
+    <!-- HOW IT WORKS -->
+    <div class="sb-sec">
+      <div class="sb-title">HOW IT WORKS</div>
+      <div class="dg-step"><div class="dg-num">1</div><div class="dg-text">Pick a game or bet. Choose your amount.</div></div>
+      <div class="dg-step"><div class="dg-num">2</div><div class="dg-text">Send ZNN to the shown address from Syrius wallet.</div></div>
+      <div class="dg-step"><div class="dg-num">3</div><div class="dg-text">Win → payout arrives automatically. No trust needed.</div></div>
+    </div>
+
+    <!-- LIVE ACTIVITY -->
+    <div class="sb-sec">
+      <div class="sb-title">LIVE ACTIVITY</div>
+      <div id="act-list"><div class="act-it" style="color:var(--muted)">Connecting<span class="ldots"></span></div></div>
+    </div>
+
+    <!-- PLATFORM STATS -->
+    <div class="sb-sec">
+      <div class="sb-title">PLATFORM</div>
+      <div id="plat-stats">
+        <div class="stat-box"><div class="stat-lbl">ONLINE</div><div class="stat-val" id="st-online">—</div></div>
+        <div class="stat-box"><div class="stat-lbl">VOLUME</div><div class="stat-val bv" id="st-vol">—</div></div>
+        <div class="stat-box"><div class="stat-lbl">WINNERS</div><div class="stat-val" id="st-wins">—</div></div>
+        <div class="stat-box"><div class="stat-lbl">MARKETS</div><div class="stat-val" id="st-mkts">—</div></div>
+      </div>
+    </div>
+
+    <!-- LEADERBOARD -->
+    <div class="sb-sec">
+      <div class="sb-title">LEADERBOARD</div>
+      <div id="lb-list">
+        <div class="lb-row"><div class="lb-rank">1</div><div class="lb-addr">z1qpsj…f9e</div><div class="lb-amt">142 ZNN</div></div>
+        <div class="lb-row"><div class="lb-rank">2</div><div class="lb-addr">z1qqjn…wpm</div><div class="lb-amt">98 ZNN</div></div>
+        <div class="lb-row"><div class="lb-rank">3</div><div class="lb-addr">z1qq7n…kjd</div><div class="lb-amt">61 ZNN</div></div>
+        <div class="lb-row"><div class="lb-rank">4</div><div class="lb-addr">z1qr8y…rzq</div><div class="lb-amt">44 ZNN</div></div>
+        <div class="lb-row"><div class="lb-rank">5</div><div class="lb-addr">z1qf2k…xmn</div><div class="lb-amt">37 ZNN</div></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- FOOTER -->
+<div id="footer">
+  <div style="margin-bottom:6px">Powered by <a href="https://zenon.network" target="_blank">Zenon Network</a> &nbsp;·&nbsp; Provably fair RNG &nbsp;·&nbsp; HTLC-secured payouts</div>
+  <div>Every result is verifiable on-chain. <a href="#" onclick="alert('RNG seed = sessionId. Verify any result at zenonhub.io')">How to verify →</a></div>
+</div>
+
+<!-- GAME VIEW (fullscreen) -->
+<div id="game-view">
+  <div id="game-hdr">
+    <button id="game-back" onclick="exitGame()">← BACK</button>
+    <div id="game-name">—</div>
+    <div id="game-info"></div>
+  </div>
+  <div id="game-body">
+    <div id="dice-wrap" class="hidden"></div>
+    <div id="slots-wrap" class="hidden"></div>
+    <div id="shooter-wrap" class="hidden">
+      <canvas id="shooter-canvas"></canvas>
+      <div id="shooter-hud">
+        <div class="hud-p" id="hud-score">SCORE: 0</div>
+        <div class="hud-p" id="hud-wave">WAVE 1/5</div>
+        <div class="hud-p" id="hud-hp">♥♥♥</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- GAME OVER OVERLAY -->
+<div id="go-ov">
+  <div class="go-title" id="go-title">—</div>
+  <div class="go-msg"  id="go-msg"></div>
+  <div class="go-pay"  id="go-pay"></div>
+  <div class="go-tx"   id="go-tx"></div>
+  <div class="go-btns">
+    <button class="go-btn go-bp" onclick="openBetModal(currentGame)">PLAY AGAIN</button>
+    <button class="go-btn go-bs" onclick="exitGame()">LOBBY</button>
+  </div>
+</div>
+
+<!-- BET SETUP MODAL -->
+<div id="bet-modal" class="modal-ov hidden">
+  <div class="modal">
+    <div class="modal-hdr">
+      <div class="modal-title" id="bet-modal-title">START GAME</div>
+      <button class="modal-x" onclick="closeBetModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="m-lbl">YOUR ZENON ADDRESS</div>
+      <input id="bet-addr" class="m-inp" type="text" placeholder="z1q...">
+      <div style="font-size:10px;color:var(--dim);margin-top:-10px;margin-bottom:14px">Winnings sent here automatically</div>
+      <div class="m-lbl">BET AMOUNT (ZNN)</div>
+      <div class="amt-grid" id="bet-amt-grid"></div>
+      <div class="info-row"><span class="lbl">Payout if win</span><span class="val w" id="bet-pay-prev">—</span></div>
+      <div class="info-row"><span class="lbl">House edge</span><span class="val">10%</span></div>
+      <button class="m-btn" id="bet-ok-btn" onclick="confirmBet()">CONTINUE →</button>
+    </div>
+  </div>
+</div>
+
+<!-- DEPOSIT MODAL -->
+<div id="dep-modal" class="modal-ov hidden">
+  <div class="modal">
+    <div class="modal-hdr">
+      <div class="modal-title">SEND DEPOSIT</div>
+      <button class="modal-x" onclick="closeDepModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="dep-box">
+        <div class="m-lbl">SEND EXACTLY</div>
+        <div class="dep-big" id="dep-amt">—</div>
+        <div class="m-lbl">TO ADDRESS</div>
+        <div class="dep-addr" id="dep-addr">—</div>
+        <div style="font-size:10px;color:var(--dim);margin-top:5px">Use Syrius wallet or any ZNN-compatible wallet</div>
+      </div>
+      <div class="info-row"><span class="lbl">Game</span><span class="val" id="dep-game">—</span></div>
+      <div class="info-row"><span class="lbl">Win payout</span><span class="val w" id="dep-pay">—</span></div>
+      <div class="info-row"><span class="lbl">Expires</span><span class="val" id="dep-exp">—</span></div>
+      <div style="margin-top:14px">
+        <div class="m-lbl">PASTE TX HASH AFTER SENDING</div>
+        <div class="tx-row">
+          <input id="dep-tx" class="tx-inp" placeholder="transaction hash..." />
+          <button class="tx-btn" id="dep-verify-btn" onclick="submitTxHash()">VERIFY</button>
+        </div>
+      </div>
+      <div id="dep-status"></div>
+    </div>
+  </div>
+</div>
+
+<!-- MARKET POSITION MODAL -->
+<div id="mkt-modal" class="modal-ov hidden">
+  <div class="modal">
+    <div class="modal-hdr">
+      <div class="modal-title">TAKE POSITION</div>
+      <button class="modal-x" onclick="closeMktModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div style="font-size:13px;color:var(--text);margin-bottom:16px;line-height:1.4" id="mkt-q">—</div>
+      <div class="m-lbl">PICK A SIDE</div>
+      <div class="side-grid">
+        <button class="side-btn side-yes" id="side-yes" onclick="pickSide('yes')">YES ✓</button>
+        <button class="side-btn side-no"  id="side-no"  onclick="pickSide('no')">NO ✗</button>
+      </div>
+      <div class="m-lbl">STAKE (ZNN)</div>
+      <div class="amt-grid" id="mkt-amt-grid"></div>
+      <div class="m-lbl">YOUR ZENON ADDRESS</div>
+      <input id="mkt-addr" class="m-inp" type="text" placeholder="z1q..." />
+      <div class="info-row"><span class="lbl">Current odds</span><span class="val" id="mkt-odds">50/50</span></div>
+      <button class="m-btn" id="mkt-ok-btn" onclick="confirmPosition()">CONFIRM POSITION →</button>
+      <div id="mkt-status"></div>
+    </div>
+  </div>
+</div>
+
+<!-- CONNECT MODAL -->
+<div id="conn-modal" class="modal-ov hidden">
+  <div class="modal">
+    <div class="modal-hdr">
+      <div class="modal-title">GET STARTED</div>
+      <button class="modal-x" onclick="closeConn()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div style="font-size:13px;color:var(--text);margin-bottom:18px;line-height:1.5">No account needed. Just a Zenon address for receiving winnings.</div>
+      <div class="m-lbl">YOUR ZENON ADDRESS (z1q…)</div>
+      <input id="conn-addr" class="m-inp" type="text" placeholder="z1q..." />
+      <div style="font-size:10px;color:var(--dim);margin-top:-10px;margin-bottom:14px">Get a free wallet at <a href="https://syrius.zenon.org" target="_blank">syrius.zenon.org</a></div>
+      <button class="m-btn" onclick="saveAddr()">SAVE ADDRESS</button>
+      <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">
+        <div style="font-size:11px;color:var(--dim);margin-bottom:8px">NO WALLET YET?</div>
+        <div class="dg-step"><div class="dg-num">1</div><div class="dg-text">Download Syrius wallet — free, open source, desktop</div></div>
+        <div class="dg-step"><div class="dg-num">2</div><div class="dg-text">Create address — 30 seconds, no KYC</div></div>
+        <div class="dg-step"><div class="dg-num">3</div><div class="dg-text">Use free play first to win ZNN with zero deposit</div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════ CONFIG ═══════════════════════
+const API       = 'http://localhost:3001';
+const VALID_BETS = [0.1, 0.5, 1.0, 2.0, 5.0, 10.0];
+
+// ═══════════════════════ STATE ════════════════════════
+const S = {
+  addr:      localStorage.getItem('ng_addr') || '',
+  sessionId: null,
+  bet:       0,
+  payout:    0,
+};
+let currentGame    = null;
+let currentMktId   = null;
+let selectedSide   = null;
+let selectedBet    = 0.5;
+let marketsList    = [];
+let depPollTimer   = null;
+let feedRotTimer   = null;
+let feedEvents     = [];
+let feedIdx        = 0;
+
+// ═══════════════════════ INIT ═════════════════════════
+document.addEventListener('DOMContentLoaded', () => {
+  if (S.addr) refreshAddrUI();
+  buildAmtGrids();
+  initDiceHTML();
+  initSlotsHTML();
+  loadMarkets();
+  loadFeedRecent();
+  connectSSE();
+  loadStats();
+  fetchPrices();
+  setInterval(fetchPrices, 60000);
+  // free play addr pre-fill
+  const fp = document.getElementById('fp-addr');
+  if (fp && S.addr) fp.value = S.addr;
+});
+
+function refreshAddrUI() {
+  const short = S.addr ? S.addr.slice(0,10)+'…' : '';
+  document.getElementById('connect-btn').textContent = short || 'CONNECT WALLET';
+  ['bet-addr','mkt-addr','conn-addr'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el && !el.value) el.value = S.addr;
+  });
+}
+
+function buildAmtGrids() {
+  [['bet-amt-grid', () => updateBetPrev()], ['mkt-amt-grid', () => {}]].forEach(([gid, cb]) => {
+    const g = document.getElementById(gid);
+    if (!g) return;
+    VALID_BETS.forEach(v => {
+      const b = document.createElement('button');
+      b.className = 'amt-btn' + (v === selectedBet ? ' sel' : '');
+      b.textContent = v + ' ZNN';
+      b.onclick = () => {
+        g.querySelectorAll('.amt-btn').forEach(x => x.classList.remove('sel'));
+        b.classList.add('sel');
+        selectedBet = v;
+        cb();
+      };
+      g.appendChild(b);
+    });
+  });
+  updateBetPrev();
+}
+
+function updateBetPrev() {
+  const el = document.getElementById('bet-pay-prev');
+  if (el) el.textContent = (selectedBet * 10).toFixed(1) + ' ZNN';
+}
+
+// ═══════════════════════ NAV ══════════════════════════
+function goTo(sec) {
+  document.querySelectorAll('.nav-btn').forEach(b => {
+    b.classList.toggle('active', b.textContent.toLowerCase().trim() === sec);
+  });
+  const targets = { home: null, markets: 'sec-markets', games: 'sec-games' };
+  if (sec === 'home') { window.scrollTo({ top:0, behavior:'smooth' }); return; }
+  const el = document.getElementById(targets[sec]);
+  if (el) el.scrollIntoView({ behavior: 'smooth' });
+}
+
+function scrollTo(id, smooth) {
+  const el = document.getElementById(id);
+  if (el) el.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto' });
+  const fp = document.getElementById('fp-addr');
+  if (fp) { fp.style.display = 'block'; fp.focus(); }
+}
+
+// ═══════════════════════ PRICES ═══════════════════════
+async function fetchPrices() {
+  try {
+    const r = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,zenon-2&vs_currencies=usd&include_24hr_change=true');
+    const d = await r.json();
+    const fmt = p => '$' + Number(p).toLocaleString(undefined,{maximumFractionDigits:2});
+    const chg = c => c >= 0
+      ? '<span class="up">▲'+c.toFixed(1)+'%</span>'
+      : '<span class="dn">▼'+Math.abs(c).toFixed(1)+'%</span>';
+    const btc = d.bitcoin, eth = d.ethereum, znn = d['zenon-2'];
+    if (btc) document.getElementById('tk-btc').innerHTML = fmt(btc.usd)+' '+chg(btc.usd_24h_change);
+    if (eth) document.getElementById('tk-eth').innerHTML = fmt(eth.usd)+' '+chg(eth.usd_24h_change);
+    if (znn) document.getElementById('tk-znn').innerHTML = fmt(znn.usd)+' '+chg(znn.usd_24h_change);
+  } catch(_) {}
+}
+
+// ═══════════════════════ FEED ═════════════════════════
+function connectSSE() {
+  try {
+    const es = new EventSource(API + '/feed/events');
+    es.onmessage = e => {
+      const d = JSON.parse(e.data);
+      if (d.type === 'init') { feedEvents = d.events || []; renderFeed(); renderAct(); updateStats(d.stats); }
+      else if (d.type === 'event') { feedEvents.unshift(d.event); if (feedEvents.length > 40) feedEvents.pop(); renderFeed(); renderAct(); }
+      else if (d.type === 'stats') updateStats(d.stats);
+    };
+    es.onerror = () => setTimeout(connectSSE, 5000);
+  } catch(_) {}
+}
+
+async function loadFeedRecent() {
+  try {
+    const r = await fetch(API + '/feed/recent');
+    const d = await r.json();
+    feedEvents = d.events || [];
+    renderFeed(); renderAct(); updateStats(d.stats);
+  } catch(_) {}
+}
+
+function renderFeed() {
+  if (!feedEvents.length) return;
+  clearInterval(feedRotTimer);
+  feedIdx = 0;
+  showFeedItem(feedIdx);
+  feedRotTimer = setInterval(() => {
+    feedIdx = (feedIdx + 1) % Math.min(feedEvents.length, 8);
+    showFeedItem(feedIdx);
+  }, 3200);
+}
+
+function showFeedItem(i) {
+  const el = document.getElementById('feed-line');
+  if (!el || !feedEvents[i]) return;
+  el.innerHTML = fmtFeedText(feedEvents[i]);
+}
+
+function fmtFeedText(e) {
+  let t = e.text || '';
+  t = t.replace(/(\d+\.?\d*)\s*ZNN/g, '<span class="bhl">$1 ZNN</span>');
+  t = t.replace(/"([^"]+)"/g, '"<span class="mhl">$1</span>"');
+  const age = e.age || '';
+  return t + ' <span style="color:var(--green3);font-size:10px">' + age + '</span>';
+}
+
+function renderAct() {
+  const el = document.getElementById('act-list');
+  if (!feedEvents.length) return;
+  el.innerHTML = feedEvents.slice(0, 7).map(e =>
+    '<div class="act-it">' + fmtFeedText(e) + '</div>'
+  ).join('');
+}
+
+function updateStats(s) {
+  if (!s) return;
+  setText('online-n',  s.onlineCount);
+  setText('st-online', s.onlineCount);
+  setText('st-vol',    s.totalVolume?.toFixed(1) || '—');
+  setText('st-wins',   s.totalWins || '—');
+  setText('ts-vol',    s.totalVolume?.toFixed(1) || '—');
+  setText('ts-wins',   s.totalWins || '—');
+}
+
+async function loadStats() {
+  try {
+    const r = await fetch(API + '/stats');
+    const d = await r.json();
+    if (d.markets) {
+      setText('st-mkts', d.markets.open || 0);
+      setText('ts-mkts', d.markets.open || 0);
+    }
+  } catch(_) {}
+}
+
+// ═══════════════════════ MARKETS ══════════════════════
+async function loadMarkets() {
+  try {
+    const r = await fetch(API + '/markets?limit=8');
+    const d = await r.json();
+    marketsList = d.markets || [];
+    renderMarkets(marketsList);
+    if (marketsList.length >= 8) document.getElementById('mkts-more').classList.remove('hidden');
+    const rr = await fetch(API + '/markets/recent');
+    const rd = await rr.json();
+    renderResolved(rd.markets || []);
+  } catch(_) {
+    document.getElementById('market-grid').innerHTML = '<div class="empty-state">Backend offline — start the server to load markets</div>';
+  }
+}
+
+async function loadMoreMkts() {
+  try {
+    const r = await fetch(API + '/markets?limit=20');
+    const d = await r.json();
+    marketsList = d.markets || [];
+    renderMarkets(marketsList);
+    document.getElementById('mkts-more').classList.add('hidden');
+  } catch(_) {}
+}
+
+function renderMarkets(list) {
+  const g = document.getElementById('market-grid');
+  if (!list.length) {
+    g.innerHTML = '<div class="empty-state">No open markets yet.<br>The bot is researching<span class="blink">_</span></div>';
+    return;
+  }
+  g.innerHTML = list.map(mktCard).join('');
+}
+
+function mktCard(m) {
+  const tl = fmtTL(m.resolvesAt - Date.now());
+  const cc = m.category === 'price' ? 'price' : m.category === 'macro' ? 'macro' : '';
+  return `<div class="mkt-card" id="mc-${m.id}">
+    <div class="mkt-q">${esc(m.question)}</div>
+    <div class="mkt-meta">
+      <span class="mkt-tag ${cc}">${m.category.toUpperCase()}</span>
+      ${(m.tags||[]).slice(0,2).map(t=>`<span class="mkt-tag">${t}</span>`).join('')}
+      <span class="mkt-time">⏳ ${tl}</span>
+    </div>
+    <div class="mkt-odds">
+      <button class="odds-btn odds-yes" onclick="openMktModal('${m.id}','yes')">
+        YES<br><div class="odds-pct">${m.yesOdds}% say yes</div>
+      </button>
+      <button class="odds-btn odds-no" onclick="openMktModal('${m.id}','no')">
+        NO<br><div class="odds-pct">${m.noOdds}% say no</div>
+      </button>
+    </div>
+    <div class="mkt-pool">Pool: <b>${m.totalPool} ZNN</b> · ${m.positionCount} positions</div>
+    <div class="mkt-bar"><div class="mkt-bar-fill" style="width:${m.yesOdds}%"></div></div>
+  </div>`;
+}
+
+function renderResolved(list) {
+  if (!list.length) return;
+  document.getElementById('resolved-grid').innerHTML = list.map(m => `
+    <div class="mkt-card mkt-resolved" style="padding:12px">
+      <div class="${m.outcome==='yes'?'res-badge res-yes':'res-badge res-no'}">${m.outcome==='yes'?'✓ YES':'✗ NO'}</div>
+      <div class="mkt-q" style="font-size:12px">${esc(m.question)}</div>
+      <div class="mkt-pool">Pool: <b>${m.totalPool} ZNN</b> · ${m.positionCount} bets</div>
+    </div>`).join('');
+}
+
+// ═══════════════════════ MARKET MODAL ═════════════════
+function openMktModal(id, side) {
+  currentMktId = id;
+  selectedSide = side;
+  const m = marketsList.find(x => x.id === id);
+  if (!m) return;
+  document.getElementById('mkt-q').textContent    = m.question;
+  document.getElementById('mkt-odds').textContent = m.yesOdds+'% YES / '+m.noOdds+'% NO';
+  if (side) pickSide(side);
+  if (S.addr) document.getElementById('mkt-addr').value = S.addr;
+  document.getElementById('mkt-status').innerHTML = '';
+  document.getElementById('mkt-modal').classList.remove('hidden');
+}
+function closeMktModal() { document.getElementById('mkt-modal').classList.add('hidden'); selectedSide = null; }
+
+function pickSide(side) {
+  selectedSide = side;
+  document.getElementById('side-yes').classList.toggle('sel', side === 'yes');
+  document.getElementById('side-no').classList.toggle('sel',  side === 'no');
+}
+
+async function confirmPosition() {
+  const addr = document.getElementById('mkt-addr').value.trim();
+  if (!addr.startsWith('z1q')) return showSt('mkt-status','Invalid address','err');
+  if (!selectedSide)           return showSt('mkt-status','Pick YES or NO','err');
+
+  const btn = document.getElementById('mkt-ok-btn');
+  btn.disabled = true;
+  showSt('mkt-status','Creating position…','wait');
+  try {
+    const r = await fetch(API+'/markets/'+currentMktId+'/position', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ playerAddress:addr, side:selectedSide, amountZnn:selectedBet }),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'Failed');
+    closeMktModal();
+    showDepForMarket(d, currentMktId);
+  } catch(err) {
+    showSt('mkt-status', err.message, 'err');
+  } finally { btn.disabled = false; }
+}
+
+function showDepForMarket(posData, mktId) {
+  setText('dep-amt',  posData.depositAmount + ' ZNN');
+  setText('dep-addr', posData.depositTo);
+  setText('dep-game', 'Market position #' + posData.positionId.slice(-8));
+  setText('dep-pay',  'Proportional to pool');
+  setText('dep-exp',  'Market duration');
+  document.getElementById('dep-status').innerHTML = '';
+  document.getElementById('dep-verify-btn').onclick = () => verifyMktDeposit(mktId, posData.positionId);
+  document.getElementById('dep-modal').classList.remove('hidden');
+}
+
+async function verifyMktDeposit(mktId, posId) {
+  const txHash = document.getElementById('dep-tx').value.trim();
+  if (!txHash) return showSt('dep-status','Paste tx hash first','err');
+  showSt('dep-status','Verifying…','wait');
+  try {
+    const r = await fetch(API+'/markets/'+mktId+'/position/'+posId+'/confirm', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ txHash }),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error||'Failed');
+    showSt('dep-status','✓ Position confirmed! Payout at market resolution.','ok');
+    setTimeout(closeDepModal, 3000);
+    loadMarkets();
+  } catch(err) { showSt('dep-status', err.message, 'err'); }
+}
+
+// ═══════════════════════ GAME FLOW ════════════════════
+function startGame(gameId) {
+  if (gameId === 'shooter') {
+    alert('Space Shooter is temporarily disabled while server-side verification is rebuilt.');
+    return;
+  }
+  currentGame = gameId;
+  openBetModal(gameId);
+}
+
+function openBetModal(gameId) {
+  currentGame = gameId;
+  const names = { dice:'HASH DICE', slots:'PLASMA SLOTS', shooter:'SPACE SHOOTER' };
+  document.getElementById('bet-modal-title').textContent = names[gameId] || gameId;
+  document.getElementById('bet-ok-btn').disabled = false;
+  document.getElementById('bet-addr').value = S.addr || '';
+  document.querySelectorAll('#bet-amt-grid .amt-btn').forEach(b => {
+    b.classList.toggle('sel', parseFloat(b.textContent) === selectedBet);
+  });
+  updateBetPrev();
+  document.getElementById('bet-modal').classList.remove('hidden');
+  document.getElementById('go-ov').classList.remove('vis');
+}
+function closeBetModal() { document.getElementById('bet-modal').classList.add('hidden'); }
+
+async function confirmBet() {
+  const addr = document.getElementById('bet-addr').value.trim();
+  if (!addr.startsWith('z1q') || addr.length < 10) return alert('Invalid Zenon address (must start with z1q)');
+  S.addr = addr; localStorage.setItem('ng_addr', addr); refreshAddrUI();
+
+  const btn = document.getElementById('bet-ok-btn');
+  btn.disabled = true; btn.textContent = 'CREATING SESSION…';
+  try {
+    const r = await fetch(API+'/session/create', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ playerAddress:addr, gameId:currentGame, betAmount:selectedBet }),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'Failed to create session');
+    S.sessionId = d.sessionId; S.bet = d.depositAmount; S.payout = d.payoutAmount;
+    closeBetModal();
+    showDepModal(d);
+  } catch(err) { alert('Error: '+err.message); }
+  finally { btn.disabled = false; btn.textContent = 'CONTINUE →'; }
+}
+
+function showDepModal(sd) {
+  const mins = Math.round((sd.expiresAt - Date.now()) / 60000);
+  setText('dep-amt',  sd.depositAmount + ' ZNN');
+  setText('dep-addr', sd.depositTo);
+  setText('dep-game', currentGame);
+  setText('dep-pay',  sd.payoutAmount + ' ZNN');
+  setText('dep-exp',  '~' + mins + ' min');
+  document.getElementById('dep-status').innerHTML = '';
+  document.getElementById('dep-tx').value = '';
+  document.getElementById('dep-verify-btn').onclick = submitTxHash;
+  document.getElementById('dep-modal').classList.remove('hidden');
+  clearInterval(depPollTimer);
+  depPollTimer = setInterval(autoPollDep, 8000);
+}
+function closeDepModal() { document.getElementById('dep-modal').classList.add('hidden'); clearInterval(depPollTimer); }
+
+async function autoPollDep() {
+  if (!S.sessionId) return;
+  try {
+    const r = await fetch(API+'/session/'+S.sessionId);
+    const d = await r.json();
+    if (d.state === 'DEPOSIT_CONFIRMED' || d.state === 'GAME_ACTIVE') {
+      clearInterval(depPollTimer); closeDepModal(); launchGame(currentGame);
+    }
+  } catch(_) {}
+}
+
+async function submitTxHash() {
+  const tx = document.getElementById('dep-tx').value.trim();
+  if (!tx) return showSt('dep-status','Paste transaction hash first','err');
+  showSt('dep-status','Verifying on-chain…','wait');
+  try {
+    const r = await fetch(API+'/session/'+S.sessionId+'/verify-deposit', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ txHash: tx }),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error||'Verification failed');
+    showSt('dep-status','✓ Deposit confirmed! Launching game…','ok');
+    clearInterval(depPollTimer);
+    setTimeout(() => { closeDepModal(); launchGame(currentGame); }, 1200);
+  } catch(err) { showSt('dep-status', err.message, 'err'); }
+}
+
+// ═══════════════════════ LAUNCH GAME ══════════════════
+async function launchGame(gameId) {
+  try { await fetch(API+'/session/'+S.sessionId+'/start', { method:'POST' }); } catch(_) {}
+  document.getElementById('game-view').classList.add('vis');
+  const names = { dice:'HASH DICE', slots:'PLASMA SLOTS', shooter:'SPACE SHOOTER' };
+  document.getElementById('game-name').textContent = names[gameId] || gameId;
+  document.getElementById('game-info').textContent = 'Bet: '+S.bet+' ZNN · Win: '+S.payout+' ZNN';
+  ['dice-wrap','slots-wrap','shooter-wrap'].forEach(id => document.getElementById(id).classList.add('hidden'));
+  if (gameId === 'dice')    { document.getElementById('dice-wrap').classList.remove('hidden');    resetDice(); }
+  if (gameId === 'slots')   { document.getElementById('slots-wrap').classList.remove('hidden');   resetSlots(); }
+  if (gameId === 'shooter') { document.getElementById('shooter-wrap').classList.remove('hidden'); startShooter(); }
+}
+
+function exitGame() {
+  document.getElementById('game-view').classList.remove('vis');
+  document.getElementById('go-ov').classList.remove('vis');
+  if (shooterSt.raf) cancelAnimationFrame(shooterSt.raf);
+  window.removeEventListener('keydown', onKey);
+  window.removeEventListener('keyup', onKeyUp);
+  S.sessionId = null; currentGame = null;
+}
+
+// ═══════════════════════ GAME OVER ════════════════════
+function showGameOver(won, msg, sid=null) {
+  document.getElementById('go-title').textContent = won ? 'YOU WIN!' : 'GAME OVER';
+  document.getElementById('go-title').className   = 'go-title ' + (won ? 'w' : 'l');
+  document.getElementById('go-msg').textContent   = msg || (won ? 'Payout on its way.' : 'Better luck next time.');
+  document.getElementById('go-pay').textContent   = won ? '+' + S.payout + ' ZNN' : '';
+  document.getElementById('go-tx').innerHTML      = '';
+  document.getElementById('go-ov').classList.add('vis');
+  if (won) pollPayout(sid, (txHash) => {
+    if (txHash) document.getElementById('go-tx').innerHTML = 'TX: <a href="https://zenonhub.io/explorer/transaction/'+txHash+'" target="_blank">'+txHash.slice(0,22)+'…</a>';
+  });
+}
+
+async function reportResult(sid, proof) {
+  if (!sid) return;
+  try {
+    const r = await fetch(API+'/session/'+sid+'/result', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ proof }),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'Verification failed');
+    return d;
+  } catch(err) {
+    alert('Result verification failed: ' + err.message);
+    return null;
+  }
+}
+
+function pollPayout(sid, cb, n=0) {
+  if (!sid || n > 20) return;
+  setTimeout(async () => {
+    try {
+      const r = await fetch(API+'/session/'+sid+'/payout-status');
+      const d = await r.json();
+      if (d.payoutTxHash) { cb(d.payoutTxHash); return; }
+      if (d.state === 'PAYOUT_FAILED') { cb(null); return; }
+      pollPayout(sid, cb, n+1);
+    } catch(_) { pollPayout(sid, cb, n+1); }
+  }, 5000);
+}
+
+// ═══════════════════════ HASH DICE ════════════════════
+const DICE_MODES = [
+  { id:'range',   label:'RANGE BET',   desc:'WIN if roll 40–60',   check: r => r>=40&&r<=60 },
+  { id:'over50',  label:'OVER 50',     desc:'WIN if roll > 50',    check: r => r>50          },
+  { id:'under50', label:'UNDER 50',    desc:'WIN if roll < 50',    check: r => r<50          },
+  { id:'lucky77', label:'LUCKY 77',    desc:'WIN if roll 70–80',   check: r => r>=70&&r<=80  },
+  { id:'odd',     label:'ODD/EVEN',    desc:'WIN if roll is odd',  check: r => r%2!==0       },
+  { id:'jackpot', label:'JACKPOT 100', desc:'WIN if roll = 100',   check: r => r===100       },
+];
+let diceMode = DICE_MODES[0];
+let dicePlayed = false;
+
+function initDiceHTML() {
+  const el = document.getElementById('dice-wrap');
+  if (!el) return;
+  el.innerHTML = `
+    <div class="d-display"><div class="d-num" id="d-num">—</div><div class="d-seed" id="d-seed"></div></div>
+    <div class="dm-grid" id="dm-grid"></div>
+    <div class="d-info">
+      <span>MODE: <span id="dm-lbl" style="color:var(--green)">—</span></span>
+      <span>WIN IF: <span id="dm-desc" style="color:var(--text)">—</span></span>
+    </div>
+    <button class="roll-btn" id="roll-btn" onclick="rollDice()" disabled>ROLL DICE</button>
+    <div class="d-log" id="d-log"></div>`;
+  const g = document.getElementById('dm-grid');
+  DICE_MODES.forEach((m, i) => {
+    const b = document.createElement('button');
+    b.className = 'dm-btn' + (i===0?' act':'');
+    b.innerHTML = m.label + '<br><span style="font-size:10px;color:var(--dim)">' + m.desc + '</span>';
+    b.onclick = () => {
+      document.querySelectorAll('.dm-btn').forEach(x=>x.classList.remove('act'));
+      b.classList.add('act'); diceMode = m;
+      setText('dm-lbl', m.label); setText('dm-desc', m.desc);
+    };
+    g.appendChild(b);
+  });
+}
+
+function resetDice() {
+  dicePlayed = false;
+  setText('d-num', '—');
+  setText('d-seed', 'seed: ' + (S.sessionId||'waiting…'));
+  setText('dm-lbl', diceMode.label);
+  setText('dm-desc', diceMode.desc);
+  document.getElementById('d-log').innerHTML = '';
+  const b = document.getElementById('roll-btn');
+  if (b) { b.disabled = false; b.textContent = 'ROLL DICE'; }
+}
+
+function rollDice() {
+  if (dicePlayed || !S.sessionId) return;
+  dicePlayed = true;
+  const numEl = document.getElementById('d-num');
+  const btn   = document.getElementById('roll-btn');
+  btn.disabled = true;
+  let t = 0;
+  const spin = setInterval(() => {
+    numEl.textContent = Math.floor(Math.random()*100)+1;
+    if (++t >= 14) {
+      clearInterval(spin);
+      const roll = seededInt(S.sessionId, 'dice:roll', 100);
+      numEl.textContent = roll;
+      const win = diceMode.check(roll);
+      numEl.className = 'd-num ' + (win ? 'w' : 'l');
+      setText('d-seed', 'seed: ' + S.sessionId);
+      const log = document.getElementById('d-log');
+      const e = document.createElement('div');
+      e.className = 'd-log-e ' + (win?'w':'l');
+      e.textContent = '['+new Date().toLocaleTimeString()+'] Roll: '+roll+' | '+diceMode.label+' | '+(win?'WIN':'LOSS');
+      log.prepend(e);
+      const sid = S.sessionId; S.sessionId = null;
+      if (sid) reportResult(sid, { modeId:diceMode.id, claimedRoll:roll });
+      setTimeout(() => showGameOver(win, win ? 'Rolled '+roll+' — '+diceMode.label+'!' : 'Rolled '+roll+' — not this time', sid), 900);
+    }
+  }, 80);
+}
+
+// ═══════════════════════ PLASMA SLOTS ═════════════════
+const SYMS    = ['⬡','💎','🔮','⚡','🌀','🔷','🌐'];
+const SYM_PAY = {'⬡':50,'💎':20,'🔮':10,'⚡':5,'🌀':3,'🔷':2,'🌐':1.5};
+let slotsPlayed = false;
+
+function initSlotsHTML() {
+  const el = document.getElementById('slots-wrap');
+  if (!el) return;
+  el.innerHTML = `
+    <div class="slots-machine">
+      <div class="reels">
+        <div class="reel" id="r0">⬡</div>
+        <div class="reel" id="r1">⬡</div>
+        <div class="reel" id="r2">⬡</div>
+      </div>
+      <div class="slots-res" id="slots-res"></div>
+    </div>
+    <div class="pay-tbl">${SYMS.map(s=>`<div class="pay-row"><span class="pay-sym">${s} ${s} ${s}</span><span class="pay-mult">${SYM_PAY[s]}×</span></div>`).join('')}</div>
+    <button class="spin-btn" id="spin-btn" onclick="spinSlots()" disabled>SPIN ▶</button>
+    <div class="slots-log" id="slots-log"></div>`;
+}
+
+function resetSlots() {
+  slotsPlayed = false;
+  setText('slots-res', '');
+  ['r0','r1','r2'].forEach(id => setText(id,'⬡'));
+  document.getElementById('slots-log').innerHTML = '';
+  const b = document.getElementById('spin-btn');
+  if (b) { b.disabled = false; b.textContent = 'SPIN ▶'; }
+}
+
+function spinSlots() {
+  if (slotsPlayed || !S.sessionId) return;
+  slotsPlayed = true;
+  const reels = [document.getElementById('r0'), document.getElementById('r1'), document.getElementById('r2')];
+  const btn   = document.getElementById('spin-btn');
+  btn.disabled = true;
+  reels.forEach(r => r.classList.add('spin'));
+  let t = 0;
+  const spin = setInterval(() => {
+    reels.forEach(r => { r.textContent = SYMS[Math.floor(Math.random()*SYMS.length)]; });
+    if (++t >= 20) {
+      clearInterval(spin);
+      reels.forEach(r => r.classList.remove('spin'));
+      const finals = [0,1,2].map(i => SYMS[seededInt(S.sessionId,'slot:reel:'+i,SYMS.length)-1]);
+      reels.forEach((r,i) => { r.textContent = finals[i]; });
+      const win  = finals[0]===finals[1] && finals[1]===finals[2];
+      const mult = win ? SYM_PAY[finals[0]] : 0;
+      const res  = document.getElementById('slots-res');
+      res.textContent = win ? finals.join('')+' — '+mult+'× WIN!' : finals.join('')+' — no match';
+      res.style.color = win ? 'var(--win)' : 'var(--red)';
+      const log = document.getElementById('slots-log');
+      const e = document.createElement('div');
+      e.style.cssText = 'padding:2px 0;color:'+(win?'var(--win)':'var(--red)');
+      e.textContent = '['+new Date().toLocaleTimeString()+'] '+finals.join(' ')+' — '+(win?'WIN '+mult+'×':'LOSS');
+      log.prepend(e);
+      const sid = S.sessionId; S.sessionId = null;
+      if (sid) reportResult(sid, { reels:finals, multiplier:mult });
+      setTimeout(() => showGameOver(win, win ? finals.join('')+' — '+mult+'× jackpot!' : 'No match this time', sid), 1000);
+    }
+  }, 90);
+}
+
+// ═══════════════════════ SPACE SHOOTER ════════════════
+const WIN_SCORE = 2500;
+const shooterSt = { running:false, score:0, wave:1, hp:3, player:{x:0,y:0,r:14}, bullets:[], enemies:[], particles:[], keys:{}, mx:0, my:0, raf:null };
+
+function startShooter() {
+  const cv = document.getElementById('shooter-canvas');
+  const wr = document.getElementById('shooter-wrap');
+  cv.width  = wr.clientWidth  || window.innerWidth;
+  cv.height = wr.clientHeight || (window.innerHeight - 90);
+  Object.assign(shooterSt, { running:true, score:0, wave:1, hp:3, bullets:[], enemies:[], particles:[], keys:{} });
+  shooterSt.player = { x:cv.width/2, y:cv.height*.75, r:14 };
+  shooterSt.mx = cv.width/2; shooterSt.my = cv.height/2;
+  spawnWave(1, cv.width, cv.height);
+  window.addEventListener('keydown', onKey);
+  window.addEventListener('keyup', onKeyUp);
+  cv.addEventListener('mousemove', onMouse);
+  cv.addEventListener('click', onFire);
+  updateHUD();
+  (function loop() {
+    if (!shooterSt.running) return;
+    updateShooter(cv); drawShooter(cv);
+    shooterSt.raf = requestAnimationFrame(loop);
+  })();
+}
+
+function spawnWave(wave, w, h) {
+  const n = 4 + wave*2;
+  shooterSt.enemies = Array.from({length:n},(_,i)=>({
+    x:(w/n)*i+50, y:50+Math.random()*80,
+    r: wave===5&&i===0?28:wave>=3&&i<2?20:14,
+    hp:wave===5&&i===0?5:wave>=3&&i<2?2:1,
+    maxHp:wave===5&&i===0?5:wave>=3&&i<2?2:1,
+    vx:(Math.random()-.5)*(1+wave*.4), vy:.3+Math.random()*.3*wave,
+    type:wave===5&&i===0?'boss':wave>=3&&i<2?'elite':'basic',
+  }));
+}
+
+function onKey(e)   { shooterSt.keys[e.key] = true; }
+function onKeyUp(e) { shooterSt.keys[e.key] = false; }
+function onMouse(e) { const r=document.getElementById('shooter-canvas').getBoundingClientRect(); shooterSt.mx=e.clientX-r.left; shooterSt.my=e.clientY-r.top; }
+function onFire()   {
+  const {player:p,bullets,mx,my}=shooterSt;
+  const dx=mx-p.x, dy=my-p.y, d=Math.hypot(dx,dy);
+  bullets.push({x:p.x,y:p.y,vx:dx/d*12,vy:dy/d*12,r:4});
+}
+
+function updateShooter(cv) {
+  const s=shooterSt, k=s.keys, sp=4;
+  if(k['w']||k['ArrowUp'])    s.player.y-=sp;
+  if(k['s']||k['ArrowDown'])  s.player.y+=sp;
+  if(k['a']||k['ArrowLeft'])  s.player.x-=sp;
+  if(k['d']||k['ArrowRight']) s.player.x+=sp;
+  s.player.x=Math.max(s.player.r,Math.min(cv.width-s.player.r,s.player.x));
+  s.player.y=Math.max(s.player.r,Math.min(cv.height-s.player.r,s.player.y));
+  s.bullets=s.bullets.filter(b=>b.x>0&&b.x<cv.width&&b.y>0&&b.y<cv.height);
+  s.bullets.forEach(b=>{b.x+=b.vx;b.y+=b.vy});
+  s.enemies.forEach(e=>{
+    e.x+=e.vx;e.y+=e.vy;
+    if(e.x<e.r||e.x>cv.width-e.r)e.vx*=-1;
+    if(e.y>cv.height*.65||e.y<20)e.vy*=-1;
+  });
+  for(let i=s.bullets.length-1;i>=0;i--){
+    for(let j=s.enemies.length-1;j>=0;j--){
+      const b=s.bullets[i],e=s.enemies[j];
+      if(Math.hypot(b.x-e.x,b.y-e.y)<b.r+e.r){
+        s.bullets.splice(i,1); e.hp--;
+        if(e.hp<=0){
+          s.score+=e.type==='boss'?500:e.type==='elite'?150:50;
+          for(let p=0;p<7;p++) s.particles.push({x:e.x,y:e.y,vx:(Math.random()-.5)*4,vy:(Math.random()-.5)*4,life:28,c:e.type==='boss'?'#ffd700':'#00ff88'});
+          s.enemies.splice(j,1);
+        }
+        break;
+      }
+    }
+  }
+  s.enemies.forEach(e=>{
+    if(Math.hypot(s.player.x-e.x,s.player.y-e.y)<s.player.r+e.r*.7){
+      s.hp--; e.x=-200;
+      if(s.hp<=0) endShooter(false);
+    }
+  });
+  s.particles.forEach(p=>{p.x+=p.vx;p.y+=p.vy;p.life--});
+  s.particles=s.particles.filter(p=>p.life>0);
+  if(s.enemies.length===0&&s.running){
+    if(s.wave>=5||s.score>=WIN_SCORE) endShooter(true);
+    else { s.wave++; spawnWave(s.wave,cv.width,cv.height); }
+  }
+  updateHUD();
+}
+
+function drawShooter(cv) {
+  const ctx=cv.getContext('2d'), s=shooterSt;
+  ctx.fillStyle='#050a05'; ctx.fillRect(0,0,cv.width,cv.height);
+  ctx.fillStyle='rgba(0,255,65,.12)';
+  for(let i=0;i<55;i++) ctx.fillRect((i*137+s.score)%cv.width,(i*211)%cv.height,1,1);
+  drawShip(ctx,s.player.x,s.player.y,s.player.r,'#00ff41',s.mx,s.my);
+  ctx.fillStyle='#00ffcc';
+  s.bullets.forEach(b=>{ctx.beginPath();ctx.arc(b.x,b.y,b.r,0,Math.PI*2);ctx.fill()});
+  const ec={'basic':'#ff3333','elite':'#ff8800','boss':'#ffd700'};
+  s.enemies.forEach(e=>{
+    drawShip(ctx,e.x,e.y,e.r,ec[e.type]||'#ff3333',e.x,e.y+100);
+    if(e.maxHp>1){ctx.fillStyle='#222';ctx.fillRect(e.x-e.r,e.y-e.r-8,e.r*2,4);ctx.fillStyle=ec[e.type];ctx.fillRect(e.x-e.r,e.y-e.r-8,e.r*2*(e.hp/e.maxHp),4);}
+  });
+  s.particles.forEach(p=>{ctx.globalAlpha=p.life/28;ctx.fillStyle=p.c;ctx.beginPath();ctx.arc(p.x,p.y,3,0,Math.PI*2);ctx.fill()});
+  ctx.globalAlpha=1;
+  const prog=Math.min(s.score/WIN_SCORE,1);
+  ctx.fillStyle='#0a0f0a';ctx.fillRect(0,cv.height-4,cv.width,4);
+  ctx.fillStyle='#00ff41';ctx.fillRect(0,cv.height-4,cv.width*prog,4);
+}
+
+function drawShip(ctx,x,y,r,col,tx,ty){
+  const ang=Math.atan2(ty-y,tx-x)+Math.PI/2;
+  ctx.save();ctx.translate(x,y);ctx.rotate(ang);
+  ctx.strokeStyle=col;ctx.lineWidth=2;ctx.shadowColor=col;ctx.shadowBlur=8;
+  ctx.beginPath();ctx.moveTo(0,-r);ctx.lineTo(r*.6,r*.7);ctx.lineTo(0,r*.3);ctx.lineTo(-r*.6,r*.7);ctx.closePath();ctx.stroke();
+  ctx.restore();
+}
+
+function updateHUD(){
+  setText('hud-score','SCORE: '+shooterSt.score+' / '+WIN_SCORE);
+  setText('hud-wave','WAVE '+shooterSt.wave+'/5');
+  setText('hud-hp','♥'.repeat(Math.max(0,shooterSt.hp)));
+}
+
+function endShooter(won) {
+  if (!shooterSt.running) return;
+  shooterSt.running = false;
+  cancelAnimationFrame(shooterSt.raf);
+  window.removeEventListener('keydown', onKey);
+  window.removeEventListener('keyup', onKeyUp);
+  const sid = S.sessionId; S.sessionId = null;
+  if (sid) alert('Space Shooter result submission is disabled until replay verification is implemented.');
+  setTimeout(() => showGameOver(false, 'Space Shooter payouts are disabled until replay verification is implemented.', sid), 500);
+}
+
+// ═══════════════════════ FREE PLAY ════════════════════
+function doFreePlay() {
+  const fp = document.getElementById('fp-addr');
+  if (!fp.style.display || fp.style.display === 'none') { fp.style.display='block'; fp.focus(); return; }
+  const addr = fp.value.trim() || S.addr;
+  if (!addr.startsWith('z1q') || addr.length < 10) {
+    setText('fp-msg', '⚠ Enter your z1q… address first'); return;
+  }
+  S.addr = addr; localStorage.setItem('ng_addr', addr);
+  const btn = document.getElementById('fp-btn');
+  btn.disabled = true; btn.textContent = 'SPINNING…';
+  setText('fp-msg', '');
+  fetch(API+'/freeplay/play', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ address: addr }),
+  }).then(r=>r.json()).then(d => {
+    if (!d.eligible) { setText('fp-msg', d.reason || 'Not eligible today'); btn.textContent='COME BACK TOMORROW'; return; }
+    if (d.won) {
+      btn.textContent = '🎉 YOU WON!';
+      setText('fp-msg', '🎉 Won '+d.payout+' ZNN! Claiming…');
+      fetch(API+'/freeplay/claim', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ claimToken:d.claimToken, address:addr }),
+      }).then(r=>r.json()).then(cd => {
+        setText('fp-msg', cd.success ? '✓ '+d.payout+' ZNN arriving shortly. Come back tomorrow!' : 'Won but claim failed: '+cd.error);
+      });
+    } else {
+      btn.textContent = 'SPIN FOR FREE'; btn.disabled = true;
+      setText('fp-msg', d.message || 'No luck today — come back tomorrow!');
+    }
+  }).catch(() => {
+    btn.textContent = 'SPIN FOR FREE'; btn.disabled = false;
+    setText('fp-msg', 'Error: backend offline');
+  });
+}
+
+// ═══════════════════════ CONNECT ══════════════════════
+function openConn()  { document.getElementById('conn-modal').classList.remove('hidden'); }
+function closeConn() { document.getElementById('conn-modal').classList.add('hidden'); }
+function saveAddr()  {
+  const addr = document.getElementById('conn-addr').value.trim();
+  if (!addr.startsWith('z1q') || addr.length < 10) { alert('Valid Zenon address required (starts with z1q)'); return; }
+  S.addr = addr; localStorage.setItem('ng_addr', addr); refreshAddrUI(); closeConn();
+}
+
+// ═══════════════════════ SEEDED RNG ═══════════════════
+function seededInt(seed, nonce, max) {
+  let h = 0x12345678;
+  const s = seed + ':' + nonce;
+  for (let i = 0; i < s.length; i++) h = Math.imul(31, h) + s.charCodeAt(i) | 0;
+  return (Math.abs(h) % max) + 1;
+}
+
+// ═══════════════════════ HELPERS ══════════════════════
+function setText(id, v) { const el=document.getElementById(id); if(el) el.textContent=v; }
+function showSt(id, msg, type) {
+  const el=document.getElementById(id); if(!el) return;
+  const cls={ok:'st-ok',err:'st-err',wait:'st-wait'}[type]||'';
+  el.innerHTML='<div class="st-msg '+cls+'">'+esc(msg)+'</div>';
+}
+function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function fmtTL(ms) {
+  if(ms<=0) return 'expired';
+  const h=Math.floor(ms/3600000), m=Math.floor((ms%3600000)/60000);
+  if(h>=24) return Math.floor(h/24)+'d';
+  if(h>0) return h+'h '+m+'m';
+  return m+'m';
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,7 @@
+# Zips
+*.zip
+repo_remote_check/
+
+# OS
+.DS_Store
+Thumbs.db
