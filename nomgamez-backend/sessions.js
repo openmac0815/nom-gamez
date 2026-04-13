@@ -21,12 +21,18 @@ class SessionManager {
     this.sessions = new Map();
     this.seenHashes = new Set(); // prevent double-counting deposits
     this._persist = null;
+    this._store = null;
     // Clean up expired sessions every 5 min
-    setInterval(() => this.cleanup(), 5 * 60 * 1000);
+    this._cleanupTimer = setInterval(() => this.cleanup(), 5 * 60 * 1000);
+    this._cleanupTimer.unref?.();
   }
 
   setPersistence(saveFn) {
     this._persist = saveFn;
+  }
+
+  setStore(store) {
+    this._store = store;
   }
 
   /**
@@ -51,12 +57,14 @@ class SessionManager {
       log: [`[${ts()}] Session created — ${gameId} — bet: ${betAmount} ZNN`],
     };
     this.sessions.set(sessionId, session);
+    this._store?.upsertSession(session);
     console.log(`[session] Created ${sessionId} | ${playerAddress} | ${gameId} | ${betAmount} ZNN`);
     this._persist?.();
     return session;
   }
 
   get(sessionId) {
+    if (this._store) return this._store.getSessionById(sessionId);
     return this.sessions.get(sessionId) || null;
   }
 
@@ -70,6 +78,7 @@ class SessionManager {
     s.state = newState;
     Object.assign(s, extra);
     s.log.push(`[${ts()}] ${prev} → ${newState}${extra.note ? ' // ' + extra.note : ''}`);
+    this._store?.upsertSession(s);
     console.log(`[session] ${sessionId} | ${prev} → ${newState}`);
     this._persist?.();
     return s;
@@ -80,6 +89,7 @@ class SessionManager {
    */
   depositFound(sessionId, txHash) {
     this.seenHashes.add(txHash);
+    this._store?.addSeenHash(txHash);
     this._persist?.();
     return this.setState(sessionId, STATE.DEPOSIT_CONFIRMING, {
       depositTxHash: txHash,
@@ -136,10 +146,18 @@ class SessionManager {
     return this.seenHashes.has(hash);
   }
 
+  addSeenHash(hash) {
+    if (!hash) return;
+    this.seenHashes.add(hash);
+    this._store?.addSeenHash(hash);
+    this._persist?.();
+  }
+
   /**
    * Get all sessions needing deposit polling
    */
   getPendingSessions() {
+    if (this._store) return this._store.getPendingSessions(Date.now());
     const now = Date.now();
     return Array.from(this.sessions.values()).filter(s =>
       s.state === STATE.PENDING_DEPOSIT && s.expiresAt > now
@@ -150,6 +168,7 @@ class SessionManager {
    * Get sessions ready for payout
    */
   getWinningSessions() {
+    if (this._store) return this._store.getWinningSessions();
     return Array.from(this.sessions.values()).filter(s =>
       s.state === STATE.GAME_WON
     );
@@ -169,6 +188,7 @@ class SessionManager {
       // Remove very old sessions from memory (>2hrs)
       if (now - s.createdAt > 2 * 60 * 60 * 1000) {
         this.sessions.delete(id);
+        this._store?.deleteSession(id);
         this._persist?.();
       }
     }
@@ -179,6 +199,7 @@ class SessionManager {
    * Summary stats
    */
   stats() {
+    if (this._store) return this._store.getSessionStats();
     const all = Array.from(this.sessions.values());
     return {
       total: all.length,
@@ -197,8 +218,10 @@ class SessionManager {
   }
 
   importState(state = {}) {
-    this.sessions = new Map((state.sessions || []).map(session => [session.id, session]));
-    this.seenHashes = new Set(state.seenHashes || []);
+    const sessions = this._store ? this._store.getAllSessions() : (state.sessions || []);
+    const seenHashes = this._store ? this._store.getSeenHashes() : (state.seenHashes || []);
+    this.sessions = new Map(sessions.map(session => [session.id, session]));
+    this.seenHashes = new Set(seenHashes);
   }
 }
 

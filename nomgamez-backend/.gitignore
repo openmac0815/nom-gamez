@@ -8,6 +8,7 @@ npm-debug.log*
 .env.local
 .env.production
 data/
+znn-local-storage/
 
 # Build artifacts
 dist/

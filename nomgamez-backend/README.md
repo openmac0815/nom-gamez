@@ -20,6 +20,7 @@ nano .env   # fill in your seed + address
 # 3. Run
 npm start          # production
 npm run dev        # dev with auto-reload (nodemon)
+npm run start:prod # explicit production start wrapper
 ```
 
 ---
@@ -32,6 +33,7 @@ PLATFORM_ADDRESS=z1q...  (first address derived from seed)
 ZNN_NODE_URL=wss://my.hc1node.com:35998
 EXPLORER_API=https://zenonhub.io/api
 PORT=3001
+HOST=127.0.0.1
 CORS_ORIGIN=https://your-frontend-domain.com
 ADMIN_TOKEN=long-random-secret-for-admin-bearer-auth
 ```
@@ -48,7 +50,21 @@ These switches exist only as temporary compatibility escapes while the unsafe fl
 
 ## PHASE 2 DURABILITY
 
-Runtime state is now snapshotted to `nomgamez-backend/data/runtime-state.json` using atomic file writes.
+Runtime state now lives in `nomgamez-backend/data/runtime-state.sqlite`.
+
+If an older `runtime-state.json` exists, the backend migrates it into SQLite automatically on first boot.
+
+Core runtime entities are now also persisted into dedicated SQLite tables instead of only a single serialized blob:
+
+- `sessions`
+- `seen_hashes`
+- `markets`
+- `market_positions`
+- `market_payout_queue`
+- `payout_queue`
+- `payout_ledger`
+
+The regular serialized snapshot is now mainly a compatibility layer for the remaining non-core runtime modules. `sessions`, `markets`, and `payoutWorker` are restored primarily from SQLite tables.
 
 Persisted state currently includes:
 
@@ -68,6 +84,22 @@ The payout worker now keeps a durable payout ledger per session so it can:
 - expose payout lifecycle details through `GET /session/:id/payout-status`
 
 This improves idempotency and restart recovery, but it does not yet replace a full treasury reconciliation system or a real database-backed payments ledger.
+
+## PHASE 6 TREASURY + LIVE SAFETY
+
+The backend now includes a treasury manager in front of payouts and bot market creation.
+
+- payout attempts require a fresh wallet reconciliation before funds are sent
+- payout attempts are blocked if reserve, liability, or wallet-balance checks fail
+- treasury state is persisted together with the rest of runtime state
+- treasury ledger entries and reconciliation snapshots are stored in SQLite tables instead of only inside the serialized runtime blob
+- the bot can auto-halt market creation when treasury risk is detected
+- operators can inspect and control treasury state with:
+  - `GET /admin/treasury`
+  - `POST /admin/treasury/reconcile`
+  - `POST /admin/treasury/halt`
+
+Wallet reconciliation now tries the Zenon node first via the SDK and only falls back to explorer endpoints if the node path fails.
 
 ## PHASE 4 MARKET SETTLEMENT
 
@@ -103,6 +135,7 @@ Game result submission is now server-verified instead of trusting a client-repor
 | GET | `/session/:id/payout-status` | Check payout tx hash |
 | GET | `/stats` | Server stats |
 | GET | `/health` | Health check |
+| GET | `/ready` | Readiness check for deploy health probes |
 
 ---
 
@@ -174,6 +207,14 @@ pm2 startup
 # proxy_pass http://localhost:3001;
 ```
 
+## DEPLOY HEALTHCHECK
+
+```bash
+npm run healthcheck
+```
+
+This calls `/ready` against `HOST`/`PORT` and exits non-zero if the backend is not ready yet.
+
 ---
 
 ## SECURITY NOTES
@@ -184,5 +225,6 @@ pm2 startup
 - Sessions expire after `DEPOSIT_TIMEOUT` seconds
 - `/admin/*` is protected by a bearer token and disabled entirely if `ADMIN_TOKEN` is missing
 - Request body size is limited and sensitive routes are rate limited in-process
-- Client-reported game results are intentionally disabled by default until server-side verification exists
+- `dice` and `slots` are server-verified; `shooter` stays disabled until its proof system exists
 - Prediction market wagering and free play are intentionally disabled by default until durable settlement and abuse resistance are implemented
+- Treasury reconciliation can auto-halt payouts and bot market creation when reserve or liability checks fail

@@ -30,6 +30,10 @@ const ALERT_TYPE = {
   FREE_PLAY_POOL_LOW:   'free_play_pool_low',
   BOT_RESEARCH_FAILED:  'bot_research_failed',
   PUBLISHER_FAILING:    'publisher_failing',
+  TREASURY_LOW_RESERVE: 'treasury_low_reserve',
+  TREASURY_RECONCILIATION_FAILED: 'treasury_reconciliation_failed',
+  TREASURY_LIABILITY_LIMIT: 'treasury_liability_limit',
+  TREASURY_AUTO_HALTED: 'treasury_auto_halted',
 };
 
 class AlertManager {
@@ -587,6 +591,7 @@ class AdminController {
     this.engagement  = new EngagementTracker();
     this.health      = new HealthMonitor(this.alerts);
     this.payouts     = new PayoutMetrics(this.alerts);
+    this.treasury    = null;
     this.startTime   = Date.now();
     this._worker     = null;  // wired after construction to avoid circular deps
     this._persist = null;
@@ -598,6 +603,10 @@ class AdminController {
   // Wire in the PayoutWorker after construction
   setPayoutWorker(worker) {
     this._worker = worker;
+  }
+
+  setTreasuryManager(treasuryManager) {
+    this.treasury = treasuryManager;
   }
 
   setPersistence(saveFn) {
@@ -644,13 +653,14 @@ class AdminController {
       uptimeHours:         parseFloat(((now - this.startTime) / 3600000).toFixed(2)),
       services:            this.health.getStatus(),
       isHealthy:           this.health.isHealthy(),
-      safeToCreateMarkets: this.health.isSafeToCreateMarkets(),
-      safeToAcceptDeposits: this.health.isSafeToAcceptDeposits(),
+      safeToCreateMarkets: this.isSafeToCreateMarkets(),
+      safeToAcceptDeposits: this.isSafeToAcceptDeposits(),
       criticalAlerts:      this.alerts.getActive(ALERT_SEVERITY.CRITICAL).length,
       warnAlerts:          this.alerts.getActive(ALERT_SEVERITY.WARN).length,
       sessions:            sessStats,
       markets:             mktStats,
       payouts:             this.payouts.getStats(),
+      treasury:            this.treasury?.getStatus() || null,
       activeGames:         config.getActiveGameIds(),
     };
   }
@@ -667,6 +677,16 @@ class AdminController {
 
   recordBotAction(opts) {
     return this.botActions.record(opts);
+  }
+
+  isSafeToCreateMarkets() {
+    const treasurySafe = this.treasury ? this.treasury.isSafeToCreateMarkets() : true;
+    return this.health.isSafeToCreateMarkets() && treasurySafe;
+  }
+
+  isSafeToAcceptDeposits() {
+    const treasurySafe = this.treasury ? this.treasury.isSafeToAcceptDeposits() : true;
+    return this.health.isSafeToAcceptDeposits() && treasurySafe;
   }
 
   // ── ENGAGEMENT FEEDBACK → CONFIG ────────────────────────

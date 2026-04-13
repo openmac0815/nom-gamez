@@ -2,6 +2,8 @@
 // BTC-first gaming + prediction market platform on Zenon Network
 // The experience is the product. Zenon is the infrastructure.
 
+const logger = require('./logger');
+logger.installConsoleFilters();
 require('dotenv').config();
 const express    = require('express');
 const cors       = require('cors');
@@ -20,6 +22,7 @@ const { FeedManager }         = require('./feed');
 const { FreePlayManager }     = require('./freeplay');
 const { AdminController }     = require('./admin');
 const { PersistentStateStore } = require('./storage');
+const { TreasuryManager }     = require('./treasury');
 
 // ─────────────────────────────────────────
 // SERVER CONFIG  (from env — not in ConfigStore,
@@ -31,6 +34,7 @@ const SERVER_CONFIG = {
   ZNN_NODE_URL:     process.env.ZNN_NODE_URL     || 'wss://my.hc1node.com:35998',
   EXPLORER_API:     process.env.EXPLORER_API     || 'https://zenonhub.io/api',
   PORT:             parseInt(process.env.PORT)   || 3001,
+  HOST:             process.env.HOST || '127.0.0.1',
   CORS_ORIGIN:      process.env.CORS_ORIGIN      || '*',
   DEPOSIT_TIMEOUT:  parseInt(process.env.DEPOSIT_TIMEOUT) || 300,
   MAX_SESSIONS:     parseInt(process.env.MAX_SESSIONS)    || 100,
@@ -64,6 +68,13 @@ const worker = new PayoutWorker({
   adminController: adminCtrl,
 });
 
+const treasury = new TreasuryManager({
+  sessionManager: sessions,
+  marketManager: markets,
+  serverConfig: SERVER_CONFIG,
+  adminController: adminCtrl,
+});
+
 const bot = new BotAgent({
   marketManager:   markets,
   publisher,
@@ -72,10 +83,19 @@ const bot = new BotAgent({
 
 // Admin needs a reference back to the payout worker for queue inspection
 adminCtrl.setPayoutWorker(worker);
+adminCtrl.setTreasuryManager(treasury);
+worker.setTreasury(treasury);
 
 const stateStore = new PersistentStateStore(
-  path.join(__dirname, 'data', 'runtime-state.json')
+  path.join(__dirname, 'data', 'runtime-state.sqlite'),
+  {
+    legacyFilePath: path.join(__dirname, 'data', 'runtime-state.json'),
+  }
 );
+
+sessions.setStore(stateStore);
+markets.setStore(stateStore);
+worker.setStore(stateStore);
 
 const schedulePersist = () => stateStore.scheduleSave();
 sessions.setPersistence(schedulePersist);
@@ -84,6 +104,8 @@ freeplay.setPersistence(schedulePersist);
 config.setPersistence(schedulePersist);
 adminCtrl.setPersistence(schedulePersist);
 worker.setPersistence(schedulePersist);
+treasury.setPersistence(schedulePersist);
+treasury.setDatabase(stateStore);
 
 const persistedState = stateStore.load();
 if (persistedState) {
@@ -93,21 +115,22 @@ if (persistedState) {
   config.importState(persistedState.config);
   adminCtrl.importState(persistedState.admin);
   worker.importState(persistedState.payoutWorker);
+  treasury.importState(persistedState.treasury);
   console.log('[storage] Restored runtime state from disk');
 }
 
 stateStore.setSnapshotProvider(() => ({
   savedAt: Date.now(),
-  sessions: sessions.exportState(),
-  markets: markets.exportState(),
   freeplay: freeplay.exportState(),
   config: config.exportState(),
   admin: adminCtrl.exportState(),
-  payoutWorker: worker.exportState(),
+  treasury: treasury.exportState(),
 }));
 
 const jsonLimit = '32kb';
 const requestBuckets = new Map();
+let server = null;
+let publisherFlushInterval = null;
 
 function tooManyRequests(windowMs, maxRequests) {
   return (req, res, next) => {
@@ -197,7 +220,7 @@ app.use(express.json({ limit: jsonLimit }));
 // Logger
 app.use((req, res, next) => {
   if (!req.path.startsWith('/feed/events')) // don't log SSE polling
-    console.log(`[${new Date().toISOString().slice(11,19)}] ${req.method} ${req.path}`);
+    res.on('finish', () => logger.request(req, res));
   next();
 });
 
@@ -244,6 +267,21 @@ app.get('/health', (req, res) => {
       explorer:  adminCtrl.health.services.explorer,
       zenonNode: adminCtrl.health.services.zenonNode,
     },
+  });
+});
+
+app.get('/ready', (req, res) => {
+  const treasuryStatus = treasury.getStatus();
+  const health = adminCtrl.getFullHealth(sessions, markets);
+  const ready = Boolean(worker.running) && (!SERVER_CONFIG.BOT_ENABLED || bot.running) && !!treasuryStatus.lastReconciliation;
+
+  res.status(ready ? 200 : 503).json({
+    status: ready ? 'ready' : 'starting',
+    workerRunning: worker.running,
+    botRunning: bot.running,
+    treasuryReconciled: !!treasuryStatus.lastReconciliation,
+    safeToCreateMarkets: health.safeToCreateMarkets,
+    safeToAcceptDeposits: health.safeToAcceptDeposits,
   });
 });
 
@@ -517,7 +555,7 @@ app.post(
     return res.status(400).json({ error: `Deposit verification failed: ${result.reason}` });
 
   markets.confirmPositionDeposit(req.params.posId, txHash);
-  sessions.seenHashes.add(txHash);
+  sessions.addSeenHash(txHash);
   const market = markets.getMarket(req.params.id);
   const fundedPosition = markets.getPosition(req.params.posId);
   feed.pushPositionTaken({ playerAddress: fundedPosition.playerAddress, side: fundedPosition.side, amountZnn: fundedPosition.amountZnn, marketQuestion: market.question });
@@ -865,6 +903,35 @@ app.get('/admin/payouts/metrics', (req, res) => {
 });
 
 /**
+ * GET /admin/treasury
+ * Current treasury health, liabilities and reconciliation history
+ */
+app.get('/admin/treasury', (req, res) => {
+  res.json(treasury.getStatus());
+});
+
+/**
+ * POST /admin/treasury/reconcile
+ * Force a wallet reconciliation now
+ */
+app.post('/admin/treasury/reconcile', async (req, res) => {
+  const snapshot = await treasury.reconcile({ force: true, reason: 'admin' });
+  res.json(snapshot);
+});
+
+/**
+ * POST /admin/treasury/halt
+ * Body: { scope: 'payouts'|'bot'|'all', active: true|false, reason?: string }
+ */
+app.post('/admin/treasury/halt', (req, res) => {
+  const { scope = 'all', active, reason } = req.body || {};
+  if (typeof active !== 'boolean') {
+    return res.status(400).json({ error: 'Provide active: true|false' });
+  }
+  res.json(treasury.setHalt(scope, active, reason || 'manual operator action', 'admin'));
+});
+
+/**
  * GET /admin/config/history
  * Audit log of all config changes
  */
@@ -876,14 +943,14 @@ app.get('/admin/config/history', (req, res) => {
 // ─────────────────────────────────────────
 // START
 // ─────────────────────────────────────────
-app.listen(SERVER_CONFIG.PORT, () => {
+function onServerStarted() {
   const addr = SERVER_CONFIG.PLATFORM_ADDRESS;
   console.log(`
 ╔═══════════════════════════════════════════════╗
 ║   NOM-GAMEZ v2.0 — Autonomous Gaming Platform ║
 ║   Provably fair. No accounts. BTC accepted.   ║
 ╠═══════════════════════════════════════════════╣
-║  Port    : ${String(SERVER_CONFIG.PORT).padEnd(36)}║
+║  Port    : ${`${SERVER_CONFIG.HOST}:${SERVER_CONFIG.PORT}`.padEnd(36)}║
 ║  Address : ${addr.slice(0, 36).padEnd(36)}║
 ║  Bot     : ${SERVER_CONFIG.BOT_ENABLED ? 'ENABLED ✓' : 'DISABLED ✗'}${' '.repeat(SERVER_CONFIG.BOT_ENABLED ? 27 : 28)}║
 ╚═══════════════════════════════════════════════╝
@@ -900,25 +967,74 @@ app.listen(SERVER_CONFIG.PORT, () => {
     console.warn('[security] Free play disabled until abuse resistance is implemented');
   }
 
+  treasury.start();
+  treasury.reconcile({ force: true, reason: 'startup' }).catch((err) => {
+    console.error('[treasury] Startup reconciliation failed:', err.message);
+  });
   worker.start();
   if (SERVER_CONFIG.BOT_ENABLED) bot.start();
 
   // Flush publisher queue every minute
-  setInterval(() => publisher.flushQueue(), 60_000);
-});
+  publisherFlushInterval = setInterval(() => publisher.flushQueue(), 60_000);
+}
 
-process.on('SIGINT', () => {
+function startServer() {
+  return new Promise((resolve, reject) => {
+    const instance = app.listen(SERVER_CONFIG.PORT, SERVER_CONFIG.HOST, () => {
+      server = instance;
+      onServerStarted();
+      resolve(instance);
+    });
+
+    instance.once('error', (err) => {
+      logger.error('Server startup failed', {
+        code: err.code,
+        message: err.message,
+        host: SERVER_CONFIG.HOST,
+        port: SERVER_CONFIG.PORT,
+      });
+      reject(err);
+    });
+  });
+}
+
+function shutdown(code = 0) {
   console.log('\n[server] Shutting down...');
   bot.stop();
   worker.stop();
+  treasury.stop();
+  if (publisherFlushInterval) clearInterval(publisherFlushInterval);
   stateStore.saveNow();
-  process.exit(0);
+
+  const forceExitTimer = setTimeout(() => process.exit(code), 2000);
+
+  if (server) {
+    return server.close(() => {
+      clearTimeout(forceExitTimer);
+      process.exit(code);
+    });
+  }
+  clearTimeout(forceExitTimer);
+  return process.exit(code);
+}
+
+process.on('SIGINT', () => {
+  shutdown(0);
 });
 
 process.on('SIGTERM', () => {
-  console.log('\n[server] Shutting down...');
-  bot.stop();
-  worker.stop();
-  stateStore.saveNow();
-  process.exit(0);
+  shutdown(0);
 });
+
+if (require.main === module) {
+  startServer().catch(() => {
+    shutdown(1);
+  });
+}
+
+module.exports = {
+  app,
+  startServer,
+  shutdown,
+  SERVER_CONFIG,
+};

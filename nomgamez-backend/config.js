@@ -111,6 +111,18 @@ const defaultConfig = {
     circuitBreakerResetMs:   5 * 60 * 1000, // auto-reset after 5 min
   },
 
+  // ── TREASURY / LIVE SAFETY ───────────────────────────────
+  treasury: {
+    reconcileIntervalMs: 60 * 1000,
+    balanceFreshnessMs:  3 * 60 * 1000,
+    blockedRetryDelayMs: 60 * 1000,
+    minReserveZnn:       25,
+    maxSinglePayoutZnn:  50,
+    maxPendingLiabilityZnn: 250,
+    haltPayoutsOnRisk:   true,
+    haltBotOnRisk:       true,
+  },
+
   // ── ORACLE ────────────────────────────────────────────────
   oracle: {
     priceCacheTtlMs:  5 * 60 * 1000,

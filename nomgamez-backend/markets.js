@@ -102,12 +102,18 @@ class MarketManager {
     this.positions = new Map();     // positionId → position
     this.payoutQueue = [];          // positions awaiting payout
     this._persist = null;
+    this._store = null;
     // Cleanup old markets every hour
-    setInterval(() => this.cleanup(), 60 * 60 * 1000);
+    this._cleanupTimer = setInterval(() => this.cleanup(), 60 * 60 * 1000);
+    this._cleanupTimer.unref?.();
   }
 
   setPersistence(saveFn) {
     this._persist = saveFn;
+  }
+
+  setStore(store) {
+    this._store = store;
   }
 
   // ─── CREATE ───────────────────────────
@@ -167,6 +173,7 @@ class MarketManager {
     market.shareText = generateShareText(market);
 
     this.markets.set(id, market);
+    this._store?.upsertMarket(market);
     console.log(`[market] Created ${id} | ${question.slice(0, 60)}`);
     this._persist?.();
     return market;
@@ -214,6 +221,8 @@ class MarketManager {
 
     this.positions.set(positionId, position);
     market.log.push(`[${ts()}] New pending position: ${side} ${amount} ZNN from ${playerAddress.slice(0, 12)}…`);
+    this._store?.upsertPosition(position);
+    this._store?.upsertMarket(market);
 
     console.log(`[market] Position ${positionId} | ${side} ${amount} ZNN on ${marketId}`);
     this._persist?.();
@@ -248,6 +257,8 @@ class MarketManager {
     market.totalPool += pos.amountZnn;
     market.positionCount++;
     market.log.push(`[${ts()}] Funded position: ${pos.side} ${pos.amountZnn} ZNN from ${pos.playerAddress.slice(0, 12)}…`);
+    this._store?.upsertPosition(pos);
+    this._store?.upsertMarket(market);
     this._persist?.();
     return pos;
   }
@@ -274,11 +285,15 @@ class MarketManager {
           pos.state = POSITION_STATE.REFUNDED;
           pos.payoutKind = 'refund';
           this.payoutQueue.push({ positionId: pos.id, type: 'refund' });
+          this._store?.upsertPosition(pos);
+          this._store?.enqueueMarketPayout({ positionId: pos.id, type: 'refund' });
         } else if (pos.state === POSITION_STATE.PENDING_DEPOSIT) {
           pos.state = POSITION_STATE.CANCELLED;
           pos.log.push(`[${ts()}] Cancelled — market voided before deposit was confirmed`);
+          this._store?.upsertPosition(pos);
         }
       }
+      this._store?.upsertMarket(market);
       this._persist?.();
       return market;
     }
@@ -309,18 +324,22 @@ class MarketManager {
         pos.payoutKind = 'win';
         this.payoutQueue.push({ positionId: pos.id, type: 'win' });
         pos.log.push(`[${ts()}] WON — payout: ${pos.potentialPayout} ZNN`);
+        this._store?.enqueueMarketPayout({ positionId: pos.id, type: 'win' });
       } else {
         pos.state = POSITION_STATE.LOST;
         pos.log.push(`[${ts()}] LOST`);
       }
+      this._store?.upsertPosition(pos);
     }
 
     for (const pos of this.getMarketPositions(marketId).filter(pos => pos.state === POSITION_STATE.PENDING_DEPOSIT)) {
       pos.state = POSITION_STATE.CANCELLED;
       pos.log.push(`[${ts()}] Cancelled — market resolved before deposit was confirmed`);
+      this._store?.upsertPosition(pos);
     }
 
     console.log(`[market] Resolved ${marketId} → ${outcome} | ${winningPool} ZNN winning pool | ${positions.filter(p => p.state === POSITION_STATE.WON).length} winners`);
+    this._store?.upsertMarket(market);
     this._persist?.();
     return market;
   }
@@ -335,6 +354,7 @@ class MarketManager {
     if (!market || market.state !== MARKET_STATE.OPEN) return;
     market.state = MARKET_STATE.LOCKED;
     market.log.push(`[${ts()}] Market locked — awaiting resolution`);
+    this._store?.upsertMarket(market);
     console.log(`[market] Locked ${marketId}`);
     this._persist?.();
     return market;
@@ -343,22 +363,27 @@ class MarketManager {
   // ─── QUERIES ──────────────────────────
 
   getMarket(marketId) {
+    if (this._store) return this._store.getMarketById(marketId);
     return this.markets.get(marketId) || null;
   }
 
   getPosition(positionId) {
+    if (this._store) return this._store.getPositionById(positionId);
     return this.positions.get(positionId) || null;
   }
 
   getMarketPositions(marketId) {
+    if (this._store) return this._store.getPositionsByMarketId(marketId);
     return Array.from(this.positions.values()).filter(p => p.marketId === marketId);
   }
 
   getPlayerPositions(playerAddress) {
+    if (this._store) return this._store.getPositionsByPlayerAddress(playerAddress);
     return Array.from(this.positions.values()).filter(p => p.playerAddress === playerAddress);
   }
 
   getPositionsDueForPayout(limit = 10) {
+    if (this._store) return this._store.getPositionsDueForPayout(limit);
     const due = [];
     for (const item of this.payoutQueue) {
       const pos = this.positions.get(item.positionId);
@@ -374,6 +399,9 @@ class MarketManager {
    * Get open markets for the frontend feed
    */
   getOpenMarkets({ limit = 20, category = null } = {}) {
+    if (this._store) {
+      return this._store.getOpenMarkets({ limit, category }).map(publicMarket);
+    }
     let markets = Array.from(this.markets.values())
       .filter(m => m.state === MARKET_STATE.OPEN)
       .sort((a, b) => b.totalPool - a.totalPool); // most active first
@@ -386,6 +414,9 @@ class MarketManager {
    * Get recently resolved markets
    */
   getRecentlyResolved({ limit = 10 } = {}) {
+    if (this._store) {
+      return this._store.getRecentlyResolvedMarkets(limit).map(publicMarket);
+    }
     return Array.from(this.markets.values())
       .filter(m => m.state === MARKET_STATE.RESOLVED)
       .sort((a, b) => b.resolvedAt - a.resolvedAt)
@@ -397,6 +428,7 @@ class MarketManager {
    * Markets due for locking (past deadline, still open)
    */
   getDueForLocking() {
+    if (this._store) return this._store.getMarketsDueForLocking(Date.now());
     const now = Date.now();
     return Array.from(this.markets.values()).filter(m =>
       m.state === MARKET_STATE.OPEN && m.resolvesAt <= now
@@ -407,6 +439,7 @@ class MarketManager {
    * Markets due for resolution (locked, past deadline)
    */
   getDueForResolution() {
+    if (this._store) return this._store.getMarketsDueForResolution(Date.now());
     const now = Date.now();
     return Array.from(this.markets.values()).filter(m =>
       m.state === MARKET_STATE.LOCKED && m.resolvesAt <= now
@@ -418,7 +451,10 @@ class MarketManager {
    */
   drainPayoutQueue(limit = 10) {
     const drained = this.payoutQueue.splice(0, limit);
-    if (drained.length > 0) this._persist?.();
+    if (drained.length > 0) {
+      for (const item of drained) this._store?.dequeueMarketPayout(item.positionId, item.type);
+      this._persist?.();
+    }
     return drained;
   }
 
@@ -426,6 +462,7 @@ class MarketManager {
     const index = this.payoutQueue.findIndex(item => item.positionId === positionId);
     if (index === -1) return null;
     const [item] = this.payoutQueue.splice(index, 1);
+    this._store?.dequeueMarketPayout(positionId, item.type);
     this._persist?.();
     return item;
   }
@@ -437,6 +474,7 @@ class MarketManager {
     pos.payoutTxHash = txHash;
     pos.payoutKind = payoutKind;
     pos.log.push(`[${ts()}] Paid — ${payoutKind} tx: ${txHash}`);
+    this._store?.upsertPosition(pos);
     this._persist?.();
     return pos;
   }
@@ -445,6 +483,7 @@ class MarketManager {
    * Stats for /stats endpoint
    */
   stats() {
+    if (this._store) return this._store.getMarketStats();
     const all = Array.from(this.markets.values());
     return {
       total: all.length,
@@ -462,6 +501,7 @@ class MarketManager {
     for (const [id, m] of this.markets) {
       if ((m.state === MARKET_STATE.RESOLVED || m.state === MARKET_STATE.VOIDED) && m.resolvedAt < cutoff) {
         this.markets.delete(id);
+        this._store?.deleteMarket(id);
         removed++;
       }
     }
@@ -469,6 +509,7 @@ class MarketManager {
       const marketGone = !this.markets.has(pos.marketId);
       if (marketGone && pos.createdAt < cutoff) {
         this.positions.delete(id);
+        this._store?.deletePosition(id);
       }
     }
     if (removed > 0) this._persist?.();
@@ -484,9 +525,12 @@ class MarketManager {
   }
 
   importState(state = {}) {
-    this.markets = new Map((state.markets || []).map(market => [market.id, market]));
-    this.positions = new Map((state.positions || []).map(position => [position.id, position]));
-    this.payoutQueue = state.payoutQueue || [];
+    const markets = this._store ? this._store.getAllMarkets() : (state.markets || []);
+    const positions = this._store ? this._store.getAllPositions() : (state.positions || []);
+    const payoutQueue = this._store ? this._store.getMarketPayoutQueue() : (state.payoutQueue || []);
+    this.markets = new Map(markets.map(market => [market.id, market]));
+    this.positions = new Map(positions.map(position => [position.id, position]));
+    this.payoutQueue = payoutQueue;
   }
 }
 

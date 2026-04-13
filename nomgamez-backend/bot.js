@@ -231,11 +231,14 @@ class BotAgent {
 
     try {
       // ── Health gate: skip if oracle is down ──────────────────
-      if (this.admin && !this.admin.health.isSafeToCreateMarkets()) {
-        console.warn('[bot] Oracle not healthy — skipping research cycle');
+      if (this.admin && !this.admin.isSafeToCreateMarkets()) {
+        const reason = this.admin.treasury?.halts?.bot?.active
+          ? `treasury halt: ${this.admin.treasury.halts.bot.reason || 'risk detected'}`
+          : 'platform health not safe for market creation';
+        console.warn(`[bot] Market creation blocked — ${reason}`);
         this.admin.alerts.raise(
           'BOT_RESEARCH_FAILED', 'warning',
-          'Research skipped: oracle not healthy'
+          `Research skipped: ${reason}`
         );
         return;
       }

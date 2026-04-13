@@ -7,17 +7,19 @@ const { STATE } = require('./sessions');
 const { config }  = require('./config');
 
 class PayoutWorker {
-  constructor({ sessionManager, marketManager = null, serverConfig, adminController = null }) {
+  constructor({ sessionManager, marketManager = null, serverConfig, adminController = null, treasuryManager = null }) {
     this.sessions    = sessionManager;
     this.markets     = marketManager;
     this.serverConfig = serverConfig;            // PLATFORM_SEED, PLATFORM_ADDRESS, etc.
     this.adminCtrl   = adminController;          // optional — wired after admin module loads
+    this.treasury    = treasuryManager;
     this.running     = false;
     this.payoutQueue = [];                       // [ { sessionId, attempts, nextAttemptAt } ]
     this.payoutLedger = new Map();               // sessionId -> payout lifecycle record
     this.pollInterval   = null;
     this.payoutInterval = null;
     this._persist = null;
+    this._store = null;
   }
 
   // Wire in admin controller after construction (avoids circular deps)
@@ -25,8 +27,16 @@ class PayoutWorker {
     this.adminCtrl = adminController;
   }
 
+  setTreasury(treasuryManager) {
+    this.treasury = treasuryManager;
+  }
+
   setPersistence(saveFn) {
     this._persist = saveFn;
+  }
+
+  setStore(store) {
+    this._store = store;
   }
 
   start() {
@@ -49,7 +59,7 @@ class PayoutWorker {
 
   async pollDeposits() {
     // Skip if deposits are unsafe (explorer or node down)
-    if (this.adminCtrl && !this.adminCtrl.health.isSafeToAcceptDeposits()) return;
+    if (this.adminCtrl && !this.adminCtrl.isSafeToAcceptDeposits()) return;
 
     const pending = this.sessions.getPendingSessions();
     if (!pending.length) return;
@@ -98,9 +108,11 @@ class PayoutWorker {
     const already = this.payoutQueue.find(q => q.sessionId === sessionId);
     if (!already) {
       this.payoutQueue.push({ sessionId, attempts: 0, nextAttemptAt: Date.now() });
+      this._store?.upsertPayoutQueueItem({ sessionId, attempts: 0, nextAttemptAt: Date.now() });
       record.status = 'queued';
       record.lastQueuedAt = Date.now();
       record.lastUpdatedAt = Date.now();
+      this._syncLedgerRecord(sessionId, record);
       if (this.adminCtrl) this.adminCtrl.payouts.recordQueued(sessionId);
       console.log(`[payout] Queued: ${sessionId} | queue depth: ${this.payoutQueue.length}`);
       this._persist?.();
@@ -143,6 +155,7 @@ class PayoutWorker {
 
     // Remove from queue (will re-add on failure if retries remain)
     this.payoutQueue = this.payoutQueue.filter(q => q !== item);
+    this._store?.deletePayoutQueueItem(item.sessionId);
     this._persist?.();
 
     if (item.sessionId.startsWith('market:')) {
@@ -160,6 +173,7 @@ class PayoutWorker {
       record.status = 'sent';
       record.txHash = session.payoutTxHash || record.txHash || null;
       record.lastUpdatedAt = Date.now();
+      this._syncLedgerRecord(item.sessionId, record);
       this._persist?.();
       return;
     }
@@ -173,9 +187,19 @@ class PayoutWorker {
     record.amount = session.payoutAmount;
     record.toAddress = session.playerAddress;
     record.lastError = null;
+    this._syncLedgerRecord(item.sessionId, record);
     this._persist?.();
 
     try {
+      const treasuryAuth = await this._authorizeOrRequeue(item, {
+        ledgerId: item.sessionId,
+        amountZnn: session.payoutAmount,
+        toAddress: session.playerAddress,
+        reason: 'session_win',
+        record,
+      });
+      if (!treasuryAuth.ok) return;
+
       const result = await sendPayout({
         mnemonic: this.serverConfig.PLATFORM_SEED,
         toAddress: session.playerAddress,
@@ -188,6 +212,7 @@ class PayoutWorker {
       record.txHash = result.txHash;
       record.sentAt = Date.now();
       record.lastUpdatedAt = Date.now();
+      this._syncLedgerRecord(item.sessionId, record);
       const duration = Date.now() - start;
       console.log(`[payout] ✓ ${session.payoutAmount} ZNN → ${session.playerAddress} | tx: ${result.txHash} | ${duration}ms`);
 
@@ -202,6 +227,13 @@ class PayoutWorker {
           durationMs: duration,
         });
       }
+      this.treasury?.recordPayoutSent({
+        ledgerId: item.sessionId,
+        amountZnn: session.payoutAmount,
+        txHash: result.txHash,
+        toAddress: session.playerAddress,
+        kind: 'session_win',
+      });
       this._persist?.();
 
     } catch (err) {
@@ -209,6 +241,7 @@ class PayoutWorker {
       const willRetry  = item.attempts + 1 < maxRetries;
       record.lastError = err.message;
       record.lastUpdatedAt = Date.now();
+      this._syncLedgerRecord(item.sessionId, record);
 
       console.error(`[payout] ✗ Failed: ${item.sessionId} | attempt ${item.attempts + 1}/${maxRetries} | ${err.message}`);
 
@@ -222,6 +255,13 @@ class PayoutWorker {
           error:   err.message,
         });
       }
+      this.treasury?.recordPayoutFailed({
+        ledgerId: item.sessionId,
+        amountZnn: session.payoutAmount,
+        error: err.message,
+        toAddress: session.playerAddress,
+        kind: 'session_win',
+      });
 
       if (willRetry && !this.adminCtrl?.payouts.isCircuitOpen()) {
         // Exponential backoff: 30s, 60s, 120s...
@@ -230,8 +270,10 @@ class PayoutWorker {
         item.attempts++;
         item.nextAttemptAt = Date.now() + delay;
         this.payoutQueue.push(item);
+        this._store?.upsertPayoutQueueItem(item);
         record.status = 'retry_scheduled';
         record.nextAttemptAt = item.nextAttemptAt;
+        this._syncLedgerRecord(item.sessionId, record);
         // Session stays GAME_WON for retry
         this.sessions.setState(item.sessionId, STATE.GAME_WON, { note: `retry ${item.attempts} in ${Math.round(delay/1000)}s` });
         console.log(`[payout] Retry ${item.attempts} scheduled in ${Math.round(delay/1000)}s`);
@@ -240,6 +282,7 @@ class PayoutWorker {
         this.sessions.payoutFailed(item.sessionId, `Max retries exceeded: ${err.message}`);
         record.status = 'failed';
         record.failedAt = Date.now();
+        this._syncLedgerRecord(item.sessionId, record);
         console.error(`[payout] GAVE UP on ${item.sessionId} after ${item.attempts + 1} attempts`);
         this._persist?.();
       }
@@ -249,13 +292,20 @@ class PayoutWorker {
   // ── STATUS ────────────────────────────────────────────────
 
   getQueueStatus() {
+    const items = this._store
+      ? this._store.getPayoutQueueStatus()
+      : this.payoutQueue.map(q => ({
+          sessionId: q.sessionId,
+          attempts: q.attempts,
+          nextAttemptAt: q.nextAttemptAt,
+        }));
     return {
-      depth:         this.payoutQueue.length,
-      items:         this.payoutQueue.map(q => ({
-        sessionId:     q.sessionId,
-        attempts:      q.attempts,
+      depth:         items.length,
+      items:         items.map(q => ({
+        sessionId: q.sessionId,
+        attempts: q.attempts,
         nextAttemptAt: q.nextAttemptAt,
-        waitMs:        Math.max(0, q.nextAttemptAt - Date.now()),
+        waitMs: Math.max(0, q.nextAttemptAt - Date.now()),
       })),
       circuitOpen:   this.adminCtrl?.payouts.isCircuitOpen() || false,
     };
@@ -267,6 +317,7 @@ class PayoutWorker {
   }
 
   getPayoutRecord(sessionId) {
+    if (this._store) return this._store.getPayoutLedgerRecord(sessionId);
     return this.payoutLedger.get(sessionId) || null;
   }
 
@@ -287,9 +338,11 @@ class PayoutWorker {
     const already = this.payoutQueue.find(q => q.sessionId === ledgerId);
     if (!already) {
       this.payoutQueue.push({ sessionId: ledgerId, attempts: 0, nextAttemptAt: Date.now(), kind: payoutKind });
+      this._store?.upsertPayoutQueueItem({ sessionId: ledgerId, attempts: 0, nextAttemptAt: Date.now(), kind: payoutKind });
       record.status = 'queued';
       record.lastQueuedAt = Date.now();
       record.lastUpdatedAt = Date.now();
+      this._syncLedgerRecord(ledgerId, record);
       if (this.adminCtrl) this.adminCtrl.payouts.recordQueued(ledgerId);
       this._persist?.();
     }
@@ -319,6 +372,7 @@ class PayoutWorker {
       record.status = 'sent';
       record.txHash = pos.payoutTxHash || record.txHash || null;
       record.lastUpdatedAt = Date.now();
+      this._syncLedgerRecord(item.sessionId, record);
       this._persist?.();
       return;
     }
@@ -330,9 +384,21 @@ class PayoutWorker {
     record.amount = amount;
     record.toAddress = pos.playerAddress;
     record.lastError = null;
+    this._syncLedgerRecord(item.sessionId, record);
     this._persist?.();
 
     try {
+      const treasuryAuth = await this._authorizeOrRequeue(item, {
+        ledgerId: item.sessionId,
+        amountZnn: amount,
+        toAddress: pos.playerAddress,
+        reason: payoutKind === 'refund' ? 'market_refund' : 'market_win',
+        record,
+        marketPositionId: positionId,
+        payoutKind,
+      });
+      if (!treasuryAuth.ok) return;
+
       const result = await sendPayout({
         mnemonic: this.serverConfig.PLATFORM_SEED,
         toAddress: pos.playerAddress,
@@ -345,6 +411,7 @@ class PayoutWorker {
       record.txHash = result.txHash;
       record.sentAt = Date.now();
       record.lastUpdatedAt = Date.now();
+      this._syncLedgerRecord(item.sessionId, record);
 
       if (this.adminCtrl) {
         this.adminCtrl.payouts.recordSent(item.sessionId, amount, 0);
@@ -357,12 +424,20 @@ class PayoutWorker {
           durationMs: 0,
         });
       }
+      this.treasury?.recordPayoutSent({
+        ledgerId: item.sessionId,
+        amountZnn: amount,
+        txHash: result.txHash,
+        toAddress: pos.playerAddress,
+        kind: payoutKind,
+      });
       this._persist?.();
     } catch (err) {
       const maxRetries = config.get('payouts.maxRetries') || 3;
       const willRetry = item.attempts + 1 < maxRetries;
       record.lastError = err.message;
       record.lastUpdatedAt = Date.now();
+      this._syncLedgerRecord(item.sessionId, record);
 
       if (this.adminCtrl) {
         this.adminCtrl.payouts.recordFailed(item.sessionId, err.message, willRetry);
@@ -374,6 +449,13 @@ class PayoutWorker {
           error: err.message,
         });
       }
+      this.treasury?.recordPayoutFailed({
+        ledgerId: item.sessionId,
+        amountZnn: amount,
+        error: err.message,
+        toAddress: pos.playerAddress,
+        kind: payoutKind,
+      });
 
       if (willRetry && !this.adminCtrl?.payouts.isCircuitOpen()) {
         const baseDelay = config.get('payouts.retryDelayMs') || 30000;
@@ -381,12 +463,15 @@ class PayoutWorker {
         item.attempts++;
         item.nextAttemptAt = Date.now() + delay;
         this.payoutQueue.push(item);
+        this._store?.upsertPayoutQueueItem(item);
         this.markets.payoutQueue.push({ positionId, type: payoutKind });
         record.status = 'retry_scheduled';
         record.nextAttemptAt = item.nextAttemptAt;
+        this._syncLedgerRecord(item.sessionId, record);
       } else {
         record.status = 'failed';
         record.failedAt = Date.now();
+        this._syncLedgerRecord(item.sessionId, record);
       }
       this._persist?.();
     }
@@ -416,6 +501,7 @@ class PayoutWorker {
       lastUpdatedAt: Date.now(),
     };
     this.payoutLedger.set(sessionId, record);
+    this._syncLedgerRecord(sessionId, record);
     return record;
   }
 
@@ -427,8 +513,44 @@ class PayoutWorker {
   }
 
   importState(state = {}) {
-    this.payoutQueue = state.payoutQueue || [];
-    this.payoutLedger = new Map(state.payoutLedger || []);
+    const queue = this._store ? this._store.getPayoutQueue() : (state.payoutQueue || []);
+    const ledger = this._store ? this._store.getPayoutLedger() : (state.payoutLedger || []);
+    this.payoutQueue = queue;
+    this.payoutLedger = new Map(ledger);
+  }
+
+  async _authorizeOrRequeue(item, { ledgerId, amountZnn, toAddress, reason, record, marketPositionId = null, payoutKind = null }) {
+    if (!this.treasury) return { ok: true };
+
+    const auth = await this.treasury.authorizePayout({ ledgerId, amountZnn, toAddress, reason });
+    if (auth.ok) return auth;
+
+    record.status = 'blocked_treasury';
+    record.lastError = auth.reason;
+    record.nextAttemptAt = auth.retryAt;
+    record.lastUpdatedAt = Date.now();
+    this.payoutQueue.push({
+      ...item,
+      nextAttemptAt: auth.retryAt,
+    });
+    this._store?.upsertPayoutQueueItem({
+      ...item,
+      nextAttemptAt: auth.retryAt,
+    });
+
+    if (marketPositionId && payoutKind && this.markets) {
+      this.markets.payoutQueue.push({ positionId: marketPositionId, type: payoutKind });
+      this.markets._store?.enqueueMarketPayout({ positionId: marketPositionId, type: payoutKind });
+    }
+
+    this._syncLedgerRecord(ledgerId, record);
+    console.warn(`[payout] Treasury blocked ${ledgerId}: ${auth.reason}`);
+    this._persist?.();
+    return auth;
+  }
+
+  _syncLedgerRecord(sessionId, record) {
+    this._store?.upsertPayoutLedgerRecord(sessionId, record);
   }
 }
 

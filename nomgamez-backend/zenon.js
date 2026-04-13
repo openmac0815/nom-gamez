@@ -7,6 +7,7 @@ const axios = require('axios');
 const ZNN_TOKEN_STANDARD = 'zts1znnxxxxxxxxxxxxx9z4ulx';
 // 1 ZNN = 100000000 (8 decimals)
 const ZNN_DECIMALS = 1e8;
+let cachedSdk = null;
 
 /**
  * Convert ZNN float to raw integer
@@ -55,6 +56,125 @@ async function getTransactionByHash(hash, explorerApi) {
     console.error('[zenon] getTransactionByHash error:', err.message);
     return null;
   }
+}
+
+async function loadZenonSdk() {
+  if (cachedSdk) return cachedSdk;
+  try {
+    const sdk = await import('znn-ts-sdk/dist/index.node.js');
+    const root = sdk.default || sdk;
+    cachedSdk = {
+      Znn: root.Zenon,
+      KeyStore: root.KeyStore,
+      AccountBlockTemplate: root.AccountBlockTemplate,
+      Primitives: root.Primitives,
+      Constants: root.Constants,
+    };
+    return cachedSdk;
+  } catch (err) {
+    throw new Error('znn-ts-sdk not installed. Run: npm install github:dexter703/znn-ts-sdk');
+  }
+}
+
+function extractZnnBalance(payload) {
+  const visited = new Set();
+  const queue = [payload];
+
+  while (queue.length) {
+    const current = queue.shift();
+    if (!current || typeof current !== 'object') continue;
+    if (visited.has(current)) continue;
+    visited.add(current);
+
+    const tokenStandard = current.tokenStandard || current.zts || current.token?.tokenStandard;
+    const rawBalance = current.balance ?? current.amount ?? current.available ?? current.tokenBalance;
+
+    if (tokenStandard === ZNN_TOKEN_STANDARD && rawBalance !== undefined && rawBalance !== null) {
+      return fromRaw(rawBalance);
+    }
+
+    for (const value of Object.values(current)) {
+      if (value && typeof value === 'object') queue.push(value);
+    }
+  }
+
+  return null;
+}
+
+async function getWalletBalance({ address, explorerApi, nodeUrl = null }) {
+  const errors = [];
+
+  if (nodeUrl) {
+    try {
+      return await getWalletBalanceFromNode({ address, nodeUrl });
+    } catch (err) {
+      errors.push(`node: ${err.message}`);
+    }
+  }
+
+  const endpoints = [
+    `${explorerApi}/embedded/token/getByOwner?address=${address}`,
+    `${explorerApi}/embedded/token.getByOwner?address=${address}`,
+    `${explorerApi}/ledger/get-account-info?address=${address}`,
+    `${explorerApi}/ledger/account-info?address=${address}`,
+    `${explorerApi}/nom/account/info?address=${address}`,
+  ];
+
+  for (const url of endpoints) {
+    try {
+      const res = await axios.get(url, { timeout: 8000 });
+      const balanceZnn = extractZnnBalance(res.data);
+      if (balanceZnn !== null) {
+        return { balanceZnn, source: url };
+      }
+      errors.push(`No ZNN balance found in response from ${url}`);
+    } catch (err) {
+      errors.push(`${url}: ${err.message}`);
+    }
+  }
+
+  throw new Error(`Unable to reconcile wallet balance. ${errors.slice(0, 3).join(' | ')}`);
+}
+
+async function getWalletBalanceFromNode({ address, nodeUrl }) {
+  const { Znn, Primitives } = await loadZenonSdk();
+  const zenon = Znn.getSingleton();
+
+  try {
+    await zenon.initialize(nodeUrl, false);
+    const parsedAddress = Primitives.Address.parse(address);
+    const accountInfo = await zenon.ledger.getAccountInfoByAddress(parsedAddress);
+    const balanceZnn = extractZnnBalanceFromAccountInfo(accountInfo);
+
+    if (balanceZnn == null) {
+      throw new Error('ZNN balance not present in node account info');
+    }
+
+    return { balanceZnn, source: `node:${nodeUrl}` };
+  } finally {
+    try { zenon.client?.websocket?.close(); } catch (_) {}
+  }
+}
+
+function extractZnnBalanceFromAccountInfo(accountInfo) {
+  if (!accountInfo) return null;
+  const list = [];
+
+  if (Array.isArray(accountInfo.balanceInfoList)) list.push(...accountInfo.balanceInfoList);
+  if (accountInfo.balanceInfoMap && typeof accountInfo.balanceInfoMap === 'object') {
+    list.push(...Object.values(accountInfo.balanceInfoMap));
+  }
+
+  for (const item of list) {
+    const tokenStd = String(item?.token?.tokenStandard?.toString?.() || item?.token?.tokenStandard || item?.tokenStandard || '');
+    if (tokenStd !== ZNN_TOKEN_STANDARD) continue;
+
+    if (item.balanceWithDecimals != null) return parseFloat(item.balanceWithDecimals);
+    if (item.balanceFormatted != null) return parseFloat(item.balanceFormatted);
+    if (item.balance != null) return fromRaw(item.balance.toString ? item.balance.toString() : item.balance);
+  }
+
+  return null;
 }
 
 /**
@@ -157,19 +277,7 @@ async function sendPayout({ mnemonic, toAddress, amount, nodeUrl }) {
     throw new Error('Invalid payout amount');
   }
 
-  // Dynamic import of znn-ts-sdk (installed from github:dexter703/znn-ts-sdk)
-  let Znn, KeyStore, AccountBlockTemplate, Primitives, Constants;
-  try {
-    const sdk = await import('znn-ts-sdk/dist/index.node.js');
-    const root = sdk.default || sdk;
-    Znn = root.Zenon;
-    KeyStore = root.KeyStore;
-    AccountBlockTemplate = root.AccountBlockTemplate;
-    Primitives = root.Primitives;
-    Constants = root.Constants;
-  } catch (err) {
-    throw new Error('znn-ts-sdk not installed. Run: npm install github:dexter703/znn-ts-sdk');
-  }
+  const { Znn, KeyStore, AccountBlockTemplate, Primitives, Constants } = await loadZenonSdk();
 
   const zenon = Znn.getSingleton();
 
@@ -204,6 +312,8 @@ module.exports = {
   ZNN_DECIMALS,
   getAddressTransactions,
   getTransactionByHash,
+  getWalletBalance,
+  getWalletBalanceFromNode,
   verifyDeposit,
   pollForDeposit,
   sendPayout,
