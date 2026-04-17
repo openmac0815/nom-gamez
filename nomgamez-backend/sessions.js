@@ -9,6 +9,7 @@ const STATE = {
   DEPOSIT_CONFIRMING: 'DEPOSIT_CONFIRMING', // tx found, waiting confirm
   DEPOSIT_CONFIRMED: 'DEPOSIT_CONFIRMED',   // deposit verified, game can start
   GAME_ACTIVE: 'GAME_ACTIVE',           // game in progress
+  AWAITING_PAYOUT_CHOICE: 'AWAITING_PAYOUT_CHOICE', // winner must choose payout rail/address
   GAME_WON: 'GAME_WON',                 // player won, payout queued
   GAME_LOST: 'GAME_LOST',               // player lost
   PAYOUT_SENT: 'PAYOUT_SENT',           // winnings sent
@@ -38,7 +39,7 @@ class SessionManager {
   /**
    * Create a new game session
    */
-  create({ playerAddress, gameId, betAmount, depositTimeout }) {
+  create({ playerAddress, gameId, betAmount, depositTimeout, isTestMode = false }) {
     const sessionId = crypto.randomBytes(16).toString('hex');
     const session = {
       id: sessionId,
@@ -46,6 +47,10 @@ class SessionManager {
       gameId,
       betAmount: parseFloat(betAmount),
       payoutAmount: parseFloat((betAmount * 10).toFixed(8)), // 10x payout on win
+      payoutAsset: null,
+      payoutAddress: null,
+      payoutChoice: null,
+      quote: null,
       state: STATE.PENDING_DEPOSIT,
       createdAt: Date.now(),
       expiresAt: Date.now() + (depositTimeout * 1000),
@@ -53,8 +58,9 @@ class SessionManager {
       payoutTxHash: null,
       gameResult: null,
       gameScore: null,
+      isTestMode: Boolean(isTestMode),
       pollCount: 0,
-      log: [`[${ts()}] Session created — ${gameId} — bet: ${betAmount} ZNN`],
+      log: [`[${ts()}] Session created — ${gameId} — bet: ${betAmount} ZNN${isTestMode ? ' — TEST MODE' : ''}`],
     };
     this.sessions.set(sessionId, session);
     this._store?.upsertSession(session);
@@ -123,6 +129,35 @@ class SessionManager {
       gameDetails: details,
       gameEndedAt: Date.now(),
     });
+  }
+
+  awaitingPayoutChoice(sessionId, { payoutOptions = null } = {}) {
+    return this.setState(sessionId, STATE.AWAITING_PAYOUT_CHOICE, {
+      payoutOptions,
+      payoutChoiceRequestedAt: Date.now(),
+    });
+  }
+
+  setQuote(sessionId, quote) {
+    const s = this.sessions.get(sessionId);
+    if (!s) return null;
+    s.quote = quote;
+    this._store?.upsertSession(s);
+    this._persist?.();
+    return s;
+  }
+
+  setPayoutChoice(sessionId, payoutChoice) {
+    const s = this.sessions.get(sessionId);
+    if (!s) return null;
+    s.payoutChoice = payoutChoice;
+    s.payoutAsset = payoutChoice?.asset || null;
+    s.payoutAddress = payoutChoice?.address || null;
+    s.payoutAmount = payoutChoice?.amount ?? s.payoutAmount;
+    s.payoutOptions = payoutChoice?.availableOptions || s.payoutOptions || null;
+    this._store?.upsertSession(s);
+    this._persist?.();
+    return s;
   }
 
   /**
@@ -205,7 +240,7 @@ class SessionManager {
       total: all.length,
       pending: all.filter(s => s.state === STATE.PENDING_DEPOSIT).length,
       active: all.filter(s => s.state === STATE.GAME_ACTIVE).length,
-      won: all.filter(s => s.state === STATE.GAME_WON || s.state === STATE.PAYOUT_SENT).length,
+      won: all.filter(s => s.state === STATE.GAME_WON || s.state === STATE.AWAITING_PAYOUT_CHOICE || s.state === STATE.PAYOUT_SENT).length,
       lost: all.filter(s => s.state === STATE.GAME_LOST).length,
     };
   }

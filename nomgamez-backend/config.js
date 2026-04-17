@@ -3,46 +3,27 @@
 // All values are live — PATCH /admin/config updates them without restart
 // The bot reads from here before every action
 
+const { buildDefaultGameConfig, getGamePlugin } = require('./games');
+
 const defaultConfig = {
 
   // ── GAMES ─────────────────────────────────────────────────
   // The game registry. Each entry is a full game descriptor.
   // Add a game here + implement its frontend UI = it's live.
-  games: {
-    dice: {
-      id:          'dice',
-      name:        'Hash Dice',
-      active:      true,
-      payoutMultiplier: 10,
-      houseEdgePct: 10,
-      description: 'Roll d100. Six win modes. Provably fair.',
-      minBet:      0.1,
-      maxBet:      10.0,
-    },
-    slots: {
-      id:          'slots',
-      name:        'Plasma Slots',
-      active:      true,
-      payoutMultiplier: 10, // base; actual varies by symbol match
-      houseEdgePct: 10,
-      description: '7 symbols. 50× jackpot on triple ⬡.',
-      minBet:      0.1,
-      maxBet:      10.0,
-    },
-    shooter: {
-      id:          'shooter',
-      name:        'Space Shooter',
-      active:      false,
-      payoutMultiplier: 10,
-      houseEdgePct: 10,
-      description: 'Survive 5 waves. Skill-based. Verification rebuild in progress.',
-      minBet:      0.1,
-      maxBet:      10.0,
-    },
-  },
+  games: buildDefaultGameConfig(),
 
   // ── BETS ──────────────────────────────────────────────────
   validBets: [0.1, 0.5, 1.0, 2.0, 5.0, 10.0],
+
+  // ── PAYMENT RAILS / PROMO ECONOMICS ──────────────────────
+  payments: {
+    btcWinMultiplier: 2,
+    znnPromoWinMultiplier: 20,
+    znnPromoMaxPayoutZnn: 100,
+    maxPromoEligibleDepositUsd: 250,
+    btcMinConfirmations: 1,
+    btcValidBets: [0.0001, 0.0005, 0.001, 0.002, 0.005],
+  },
 
   // ── SESSIONS ──────────────────────────────────────────────
   depositTimeoutSeconds: 300,
@@ -211,6 +192,15 @@ class ConfigStore {
   registerGame(gameDescriptor, changedBy = 'system') {
     const { id } = gameDescriptor;
     if (!id) throw new Error('Game descriptor must have an id');
+    const plugin = getGamePlugin(id);
+    if (plugin) {
+      gameDescriptor = {
+        id: plugin.id,
+        name: plugin.name,
+        ...plugin.defaultConfig,
+        ...gameDescriptor,
+      };
+    }
     const exists = !!this._config.games[id];
     this._config.games[id] = { ...gameDescriptor };
     const action = exists ? 'updated' : 'registered';

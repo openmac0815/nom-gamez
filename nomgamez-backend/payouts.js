@@ -3,8 +3,10 @@
 // Bot can read payout health via admin.payouts.getStats()
 
 const { sendPayout, pollForDeposit } = require('./zenon');
+const { sendBtcPayout } = require('./btc');
 const { STATE } = require('./sessions');
 const { config }  = require('./config');
+const { ASSET } = require('./payment-rails');
 
 class PayoutWorker {
   constructor({ sessionManager, marketManager = null, serverConfig, adminController = null, treasuryManager = null }) {
@@ -65,6 +67,7 @@ class PayoutWorker {
     if (!pending.length) return;
 
     for (const session of pending) {
+      if ((session.depositAsset || ASSET.ZNN) !== ASSET.ZNN) continue;
       try {
         session.pollCount++;
         const found = await pollForDeposit({
@@ -179,13 +182,19 @@ class PayoutWorker {
     }
 
     const start = Date.now();
-    console.log(`[payout] Processing: ${item.sessionId} | attempt ${item.attempts + 1} | ${session.payoutAmount} ZNN → ${session.playerAddress}`);
+    const payoutChoice = session.payoutChoice || {
+      asset: ASSET.ZNN,
+      address: session.playerAddress,
+      amount: session.payoutAmount,
+    };
+    console.log(`[payout] Processing: ${item.sessionId} | attempt ${item.attempts + 1} | ${payoutChoice.amount} ${payoutChoice.asset} → ${payoutChoice.address}`);
     record.status = 'processing';
     record.attempts = item.attempts + 1;
     record.lastAttemptAt = Date.now();
     record.lastUpdatedAt = Date.now();
-    record.amount = session.payoutAmount;
-    record.toAddress = session.playerAddress;
+    record.amount = payoutChoice.amount;
+    record.asset = payoutChoice.asset;
+    record.toAddress = payoutChoice.address;
     record.lastError = null;
     this._syncLedgerRecord(item.sessionId, record);
     this._persist?.();
@@ -193,19 +202,30 @@ class PayoutWorker {
     try {
       const treasuryAuth = await this._authorizeOrRequeue(item, {
         ledgerId: item.sessionId,
-        amountZnn: session.payoutAmount,
-        toAddress: session.playerAddress,
+        amountZnn: payoutChoice.asset === ASSET.ZNN ? payoutChoice.amount : 0,
+        toAddress: payoutChoice.address,
         reason: 'session_win',
         record,
       });
       if (!treasuryAuth.ok) return;
 
-      const result = await sendPayout({
-        mnemonic: this.serverConfig.PLATFORM_SEED,
-        toAddress: session.playerAddress,
-        amount:    session.payoutAmount,
-        nodeUrl:   this.serverConfig.ZNN_NODE_URL,
-      });
+      const result = payoutChoice.asset === ASSET.BTC
+        ? await sendBtcPayout({
+          address: payoutChoice.address,
+          amountBtc: payoutChoice.amount,
+          walletRpcConfig: {
+            url: this.serverConfig.BTC_WALLET_RPC_URL,
+            username: this.serverConfig.BTC_WALLET_RPC_USER,
+            password: this.serverConfig.BTC_WALLET_RPC_PASS,
+            wallet: this.serverConfig.BTC_WALLET_RPC_WALLET || null,
+          },
+        })
+        : await sendPayout({
+          mnemonic: this.serverConfig.PLATFORM_SEED,
+          toAddress: payoutChoice.address,
+          amount:    payoutChoice.amount,
+          nodeUrl:   this.serverConfig.ZNN_NODE_URL,
+        });
 
       this.sessions.payoutSent(item.sessionId, result.txHash);
       record.status = 'sent';
@@ -214,26 +234,28 @@ class PayoutWorker {
       record.lastUpdatedAt = Date.now();
       this._syncLedgerRecord(item.sessionId, record);
       const duration = Date.now() - start;
-      console.log(`[payout] ✓ ${session.payoutAmount} ZNN → ${session.playerAddress} | tx: ${result.txHash} | ${duration}ms`);
+      console.log(`[payout] ✓ ${payoutChoice.amount} ${payoutChoice.asset} → ${payoutChoice.address} | tx: ${result.txHash} | ${duration}ms`);
 
       if (this.adminCtrl) {
-        this.adminCtrl.payouts.recordSent(item.sessionId, session.payoutAmount, duration);
-        this.adminCtrl.health.recordSuccess('zenonNode');
+        this.adminCtrl.payouts.recordSent(item.sessionId, payoutChoice.amount, duration);
+        this.adminCtrl.health.recordSuccess(payoutChoice.asset === ASSET.BTC ? 'btcWallet' : 'zenonNode');
         this.adminCtrl.recordBotAction({
           action:     'payout_sent',
-          params:     { sessionId: item.sessionId, amountZnn: session.payoutAmount },
+          params:     { sessionId: item.sessionId, amount: payoutChoice.amount, asset: payoutChoice.asset },
           success:    true,
           result:     { txHash: result.txHash },
           durationMs: duration,
         });
       }
-      this.treasury?.recordPayoutSent({
-        ledgerId: item.sessionId,
-        amountZnn: session.payoutAmount,
-        txHash: result.txHash,
-        toAddress: session.playerAddress,
-        kind: 'session_win',
-      });
+      if (payoutChoice.asset === ASSET.ZNN) {
+        this.treasury?.recordPayoutSent({
+          ledgerId: item.sessionId,
+          amountZnn: payoutChoice.amount,
+          txHash: result.txHash,
+          toAddress: payoutChoice.address,
+          kind: 'session_win',
+        });
+      }
       this._persist?.();
 
     } catch (err) {
@@ -255,13 +277,15 @@ class PayoutWorker {
           error:   err.message,
         });
       }
-      this.treasury?.recordPayoutFailed({
-        ledgerId: item.sessionId,
-        amountZnn: session.payoutAmount,
-        error: err.message,
-        toAddress: session.playerAddress,
-        kind: 'session_win',
-      });
+      if (payoutChoice.asset === ASSET.ZNN) {
+        this.treasury?.recordPayoutFailed({
+          ledgerId: item.sessionId,
+          amountZnn: payoutChoice.amount,
+          error: err.message,
+          toAddress: payoutChoice.address,
+          kind: 'session_win',
+        });
+      }
 
       if (willRetry && !this.adminCtrl?.payouts.isCircuitOpen()) {
         // Exponential backoff: 30s, 60s, 120s...
@@ -488,6 +512,7 @@ class PayoutWorker {
       amount: s?.payoutAmount ?? null,
       toAddress: s?.playerAddress || null,
       reason,
+      asset: s?.payoutChoice?.asset || null,
       status: s?.payoutTxHash ? 'sent' : 'created',
       txHash: s?.payoutTxHash || null,
       attempts: 0,
@@ -520,6 +545,7 @@ class PayoutWorker {
   }
 
   async _authorizeOrRequeue(item, { ledgerId, amountZnn, toAddress, reason, record, marketPositionId = null, payoutKind = null }) {
+    if (!amountZnn || amountZnn <= 0) return { ok: true };
     if (!this.treasury) return { ok: true };
 
     const auth = await this.treasury.authorizePayout({ ledgerId, amountZnn, toAddress, reason });

@@ -15,7 +15,7 @@
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
     "axios": "^1.6.0",
-    "znn-ts-sdk": "github:dexter703/znn-ts-sdk",
+    "znn-typescript-sdk": "github:digitalSloth/znn-typescript-sdk",
     "twitter-api-v2": "^1.15.0",
     "node-telegram-bot-api": "^0.64.0"
   },

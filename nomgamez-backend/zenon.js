@@ -1,5 +1,5 @@
 // zenon.js — Zenon Network interaction layer
-// Wraps znn-ts-sdk for deposit watching and payout sending
+// Wraps the Zenon TypeScript SDK for deposit watching and payout sending
 
 const axios = require('axios');
 
@@ -8,6 +8,22 @@ const ZNN_TOKEN_STANDARD = 'zts1znnxxxxxxxxxxxxx9z4ulx';
 // 1 ZNN = 100000000 (8 decimals)
 const ZNN_DECIMALS = 1e8;
 let cachedSdk = null;
+
+function getZenonInstance(zenonModule) {
+  if (typeof zenonModule.getInstance === 'function') return zenonModule.getInstance();
+  if (typeof zenonModule.getSingleton === 'function') return zenonModule.getSingleton();
+  throw new Error('Zenon SDK does not expose a supported singleton accessor');
+}
+
+function closeZenonConnection(zenon) {
+  try {
+    if (typeof zenon?.clearConnection === 'function') {
+      zenon.clearConnection();
+      return;
+    }
+  } catch (_) {}
+  try { zenon?.client?.websocket?.close(); } catch (_) {}
+}
 
 /**
  * Convert ZNN float to raw integer
@@ -60,20 +76,53 @@ async function getTransactionByHash(hash, explorerApi) {
 
 async function loadZenonSdk() {
   if (cachedSdk) return cachedSdk;
-  try {
-    const sdk = await import('znn-ts-sdk/dist/index.node.js');
-    const root = sdk.default || sdk;
-    cachedSdk = {
-      Znn: root.Zenon,
-      KeyStore: root.KeyStore,
-      AccountBlockTemplate: root.AccountBlockTemplate,
-      Primitives: root.Primitives,
-      Constants: root.Constants,
-    };
-    return cachedSdk;
-  } catch (err) {
-    throw new Error('znn-ts-sdk not installed. Run: npm install github:dexter703/znn-ts-sdk');
+  let lastError = null;
+
+  const candidates = [
+    {
+      name: 'znn-typescript-sdk',
+      loader: () => import('znn-typescript-sdk'),
+      map(root) {
+        return {
+          Zenon: root.Zenon,
+          KeyStore: root.KeyStore,
+          AccountBlockTemplate: root.AccountBlockTemplate,
+          Address: root.Address,
+          ZNN_ZTS: root.ZNN_ZTS,
+        };
+      },
+    },
+    {
+      name: 'znn-ts-sdk',
+      loader: () => import('znn-ts-sdk/dist/index.node.js'),
+      map(root) {
+        return {
+          Zenon: root.Zenon,
+          KeyStore: root.KeyStore,
+          AccountBlockTemplate: root.AccountBlockTemplate,
+          Address: root.Primitives?.Address,
+          ZNN_ZTS: root.Constants?.znnZts,
+        };
+      },
+    },
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      const sdk = await candidate.loader();
+      const root = sdk.default || sdk;
+      const mapped = candidate.map(root);
+      if (!mapped.Zenon || !mapped.KeyStore || !mapped.AccountBlockTemplate || !mapped.Address || !mapped.ZNN_ZTS) {
+        throw new Error(`Missing required exports from ${candidate.name}`);
+      }
+      cachedSdk = mapped;
+      return cachedSdk;
+    } catch (err) {
+      lastError = err;
+    }
   }
+
+  throw new Error(`Zenon SDK not available. Install znn-typescript-sdk. Last error: ${lastError?.message || 'unknown error'}`);
 }
 
 function extractZnnBalance(payload) {
@@ -137,12 +186,12 @@ async function getWalletBalance({ address, explorerApi, nodeUrl = null }) {
 }
 
 async function getWalletBalanceFromNode({ address, nodeUrl }) {
-  const { Znn, Primitives } = await loadZenonSdk();
-  const zenon = Znn.getSingleton();
+  const { Zenon, Address } = await loadZenonSdk();
+  const zenon = getZenonInstance(Zenon);
 
   try {
-    await zenon.initialize(nodeUrl, false);
-    const parsedAddress = Primitives.Address.parse(address);
+    await zenon.initialize(nodeUrl);
+    const parsedAddress = Address.parse(address);
     const accountInfo = await zenon.ledger.getAccountInfoByAddress(parsedAddress);
     const balanceZnn = extractZnnBalanceFromAccountInfo(accountInfo);
 
@@ -152,7 +201,7 @@ async function getWalletBalanceFromNode({ address, nodeUrl }) {
 
     return { balanceZnn, source: `node:${nodeUrl}` };
   } finally {
-    try { zenon.client?.websocket?.close(); } catch (_) {}
+    closeZenonConnection(zenon);
   }
 }
 
@@ -263,7 +312,7 @@ async function pollForDeposit({ platformAddress, fromAddress, expectedAmount, ex
 }
 
 /**
- * Send ZNN payout using znn-ts-sdk
+ * Send ZNN payout using the Zenon TypeScript SDK
  * Loads wallet from mnemonic, sends to player address
  */
 async function sendPayout({ mnemonic, toAddress, amount, nodeUrl }) {
@@ -277,21 +326,20 @@ async function sendPayout({ mnemonic, toAddress, amount, nodeUrl }) {
     throw new Error('Invalid payout amount');
   }
 
-  const { Znn, KeyStore, AccountBlockTemplate, Primitives, Constants } = await loadZenonSdk();
-
-  const zenon = Znn.getSingleton();
+  const { Zenon, KeyStore, AccountBlockTemplate, Address, ZNN_ZTS } = await loadZenonSdk();
+  const zenon = getZenonInstance(Zenon);
 
   try {
-    await zenon.initialize(nodeUrl, false);
+    await zenon.initialize(nodeUrl);
 
     // Load wallet from mnemonic
     const keyStore = await KeyStore.fromMnemonic(mnemonic);
     const keyPair = keyStore.getKeyPair(0); // first address
 
     const rawAmount = toRaw(amount);
-    const toAddr = Primitives.Address.parse(toAddress);
+    const toAddr = Address.parse(toAddress);
 
-    const block = AccountBlockTemplate.send(toAddr, Constants.znnZts, BigInt(rawAmount));
+    const block = AccountBlockTemplate.send(toAddr, ZNN_ZTS, BigInt(rawAmount));
 
     console.log(`[payout] Sending ${amount} ZNN (${rawAmount} raw) to ${toAddress}`);
     await zenon.send(block, keyPair);
@@ -301,7 +349,7 @@ async function sendPayout({ mnemonic, toAddress, amount, nodeUrl }) {
     console.error('[payout] Send failed:', err.message);
     throw err;
   } finally {
-    try { zenon.client?.websocket?.close(); } catch (_) {}
+    closeZenonConnection(zenon);
   }
 }
 

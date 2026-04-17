@@ -227,7 +227,7 @@ class PersistentStateStore {
       total: Object.values(counts).reduce((sum, count) => sum + count, 0),
       pending: counts.PENDING_DEPOSIT || 0,
       active: counts.GAME_ACTIVE || 0,
-      won: (counts.GAME_WON || 0) + (counts.PAYOUT_SENT || 0),
+      won: (counts.GAME_WON || 0) + (counts.AWAITING_PAYOUT_CHOICE || 0) + (counts.PAYOUT_SENT || 0),
       lost: counts.GAME_LOST || 0,
     };
   }

@@ -10,8 +10,8 @@
 # 1. Install dependencies
 npm install
 
-# NOTE: znn-ts-sdk installs from GitHub (not npm registry) — this is normal
-# It pulls directly from github:dexter703/znn-ts-sdk
+# NOTE: znn-typescript-sdk installs from GitHub (not npm registry) — this is normal
+# It pulls directly from github:digitalSloth/znn-typescript-sdk
 
 # 2. Configure environment
 cp .env.example .env
@@ -30,13 +30,22 @@ npm run start:prod # explicit production start wrapper
 ```
 PLATFORM_SEED=your 24 word mnemonic here
 PLATFORM_ADDRESS=z1q...  (first address derived from seed)
+BTC_DEPOSIT_ADDRESS=bc1... (platform BTC deposit address)
 ZNN_NODE_URL=wss://my.hc1node.com:35998
 EXPLORER_API=https://zenonhub.io/api
+BTC_RPC_URL=http://127.0.0.1:8334
+BTC_WALLET_RPC_URL=http://127.0.0.1:8332
 PORT=3001
 HOST=127.0.0.1
 CORS_ORIGIN=https://your-frontend-domain.com
 ADMIN_TOKEN=long-random-secret-for-admin-bearer-auth
 ```
+
+For BTC support, note:
+
+- `btcd` (or a compatible Bitcoin full node) is used for deposit verification
+- a separate wallet RPC is needed for BTC payouts
+- `btcd` alone does not sign/send payouts
 
 ## PHASE 1 SAFETY DEFAULTS
 
