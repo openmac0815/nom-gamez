@@ -17,10 +17,14 @@ const STATE = {
   EXPIRED: 'EXPIRED',                   // deposit timeout
 };
 
+// TTL for seen-hash entries — keep for 7 days (covers any realistic reorg window)
+const SEEN_HASH_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
 class SessionManager {
   constructor() {
     this.sessions = new Map();
-    this.seenHashes = new Set(); // prevent double-counting deposits
+    // seenHashes: Map<txHash, seenAtMs> — bounded by TTL, not unbounded Set
+    this.seenHashes = new Map();
     this._persist = null;
     this._store = null;
     // Clean up expired sessions every 5 min
@@ -94,7 +98,7 @@ class SessionManager {
    * Mark deposit as found (manual hash or auto-detected)
    */
   depositFound(sessionId, txHash) {
-    this.seenHashes.add(txHash);
+    this.seenHashes.set(txHash, Date.now());
     this._store?.addSeenHash(txHash);
     this._persist?.();
     return this.setState(sessionId, STATE.DEPOSIT_CONFIRMING, {
@@ -175,15 +179,18 @@ class SessionManager {
   }
 
   /**
-   * Check if hash was already used (prevent replay)
+   * Check if hash was already used (prevent replay).
+   * Also checks the persistent store as a second line of defence.
    */
   isHashSeen(hash) {
-    return this.seenHashes.has(hash);
+    if (this.seenHashes.has(hash)) return true;
+    if (this._store?.isHashSeen?.(hash)) return true;
+    return false;
   }
 
   addSeenHash(hash) {
     if (!hash) return;
-    this.seenHashes.add(hash);
+    this.seenHashes.set(hash, Date.now());
     this._store?.addSeenHash(hash);
     this._persist?.();
   }
@@ -210,7 +217,7 @@ class SessionManager {
   }
 
   /**
-   * Expire old pending sessions
+   * Expire old pending sessions and evict stale seen-hashes.
    */
   cleanup() {
     const now = Date.now();
@@ -228,6 +235,19 @@ class SessionManager {
       }
     }
     if (expired > 0) console.log(`[session] Expired ${expired} sessions`);
+
+    // Evict seen-hashes older than TTL to prevent unbounded memory growth
+    let evicted = 0;
+    for (const [hash, seenAt] of this.seenHashes) {
+      if (now - seenAt > SEEN_HASH_TTL_MS) {
+        this.seenHashes.delete(hash);
+        evicted++;
+      }
+    }
+    if (evicted > 0) console.log(`[session] Evicted ${evicted} stale tx hashes`);
+
+    // Mirror eviction in persistent store
+    this._store?.evictOldSeenHashes?.(SEEN_HASH_TTL_MS);
   }
 
   /**
@@ -247,16 +267,23 @@ class SessionManager {
 
   exportState() {
     return {
-      sessions: Array.from(this.sessions.values()),
-      seenHashes: Array.from(this.seenHashes),
+      sessions:   Array.from(this.sessions.values()),
+      // Export as [hash, timestamp] pairs for TTL preservation across restarts
+      seenHashes: Array.from(this.seenHashes.entries()),
     };
   }
 
   importState(state = {}) {
-    const sessions = this._store ? this._store.getAllSessions() : (state.sessions || []);
-    const seenHashes = this._store ? this._store.getSeenHashes() : (state.seenHashes || []);
-    this.sessions = new Map(sessions.map(session => [session.id, session]));
-    this.seenHashes = new Set(seenHashes);
+    const sessions   = this._store ? this._store.getAllSessions()  : (state.sessions   || []);
+    const seenHashes = this._store ? this._store.getSeenHashes()   : (state.seenHashes || []);
+    this.sessions = new Map(sessions.map(s => [s.id, s]));
+
+    // Support both old format (string[]) and new format ([hash, ts][])
+    this.seenHashes = new Map(
+      seenHashes.map(entry =>
+        Array.isArray(entry) ? entry : [entry, Date.now()]
+      )
+    );
   }
 }
 

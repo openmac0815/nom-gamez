@@ -25,6 +25,10 @@ const { AdminController }     = require('./admin');
 const { PersistentStateStore } = require('./storage');
 const { TreasuryManager }     = require('./treasury');
 const { getGameSessionMetadata, getPublicGameDefinitions } = require('./games');
+const { CreditManager } = require('./credits');
+const { payoutLock }   = require('./payout-lock');
+const { GameService, ServiceError } = require('./game-service');
+const { CreditService }             = require('./credit-service');
 const {
   ASSET,
   normalizeAsset,
@@ -75,6 +79,7 @@ if (!SERVER_CONFIG.PLATFORM_ADDRESS) { console.error('ERROR: PLATFORM_ADDRESS no
 const app      = express();
 const sessions = new SessionManager();
 const markets  = new MarketManager();
+const credits  = new CreditManager();
 const feed     = new FeedManager();
 const freeplay = new FreePlayManager();
 const publisher = new Publisher();
@@ -103,10 +108,20 @@ const bot = new BotAgent({
   adminController: adminCtrl,
 });
 
+// ── Service layer — business logic lives here, routes are thin wrappers ──
+const gameService = new GameService({
+  sessions, worker, feed, bot: null, // bot wired below after instantiation
+  adminCtrl, config, serverConfig: SERVER_CONFIG,
+});
+const creditService = new CreditService({
+  credits, feed, serverConfig: SERVER_CONFIG,
+});
+
 // Admin needs a reference back to the payout worker for queue inspection
 adminCtrl.setPayoutWorker(worker);
 adminCtrl.setTreasuryManager(treasury);
 worker.setTreasury(treasury);
+gameService.bot = bot; // deferred: bot created after gameService
 
 const stateStore = new PersistentStateStore(
   path.join(__dirname, 'data', 'runtime-state.sqlite'),
@@ -122,6 +137,7 @@ worker.setStore(stateStore);
 const schedulePersist = () => stateStore.scheduleSave();
 sessions.setPersistence(schedulePersist);
 markets.setPersistence(schedulePersist);
+credits.setPersistence(schedulePersist);
 freeplay.setPersistence(schedulePersist);
 config.setPersistence(schedulePersist);
 adminCtrl.setPersistence(schedulePersist);
@@ -133,6 +149,7 @@ const persistedState = stateStore.load();
 if (persistedState) {
   sessions.importState(persistedState.sessions);
   markets.importState(persistedState.markets);
+  credits.importState(persistedState.credits);
   freeplay.importState(persistedState.freeplay);
   config.importState(persistedState.config);
   adminCtrl.importState(persistedState.admin);
@@ -143,6 +160,7 @@ if (persistedState) {
 
 stateStore.setSnapshotProvider(() => ({
   savedAt: Date.now(),
+  credits: credits.exportState(),
   freeplay: freeplay.exportState(),
   config: config.exportState(),
   admin: adminCtrl.exportState(),
@@ -174,6 +192,18 @@ function getBtcWalletRpcConfig() {
 function validateOptionalPlayerAddress(address) {
   if (!address) return true;
   return isValidAddressForAsset(ASSET.ZNN, address) || isValidAddressForAsset(ASSET.BTC, address);
+}
+
+/**
+ * Route error handler for ServiceError (typed) and unexpected errors.
+ * Keeps route handlers clean — just throw, don't res.status().json().
+ */
+function handleServiceError(err, res) {
+  if (err.name === 'ServiceError') {
+    return res.status(err.status).json({ error: err.message });
+  }
+  console.error('[route] Unexpected error:', err.message, err.stack?.split('\n')[1]);
+  return res.status(500).json({ error: 'Internal server error' });
 }
 
 function tooManyRequests(windowMs, maxRequests) {
@@ -340,119 +370,42 @@ app.get('/ready', (req, res) => {
 // ─────────────────────────────────────────
 
 app.post('/session/create', async (req, res) => {
-  const { playerAddress, gameId, betAmount } = req.body;
-  const wantsTestMode = req.body?.testMode === true;
-  const useTestMode = SERVER_CONFIG.TEST_MODE_ENABLED && wantsTestMode;
-  const depositAsset = normalizeAsset(req.body?.depositAsset || ASSET.ZNN);
-  const preferredPayoutAsset = normalizeAsset(req.body?.preferredPayoutAsset || '');
-  const preferredPayoutAddress = String(req.body?.preferredPayoutAddress || playerAddress || '').trim();
-
-  if (!validateOptionalPlayerAddress(playerAddress))
-    return res.status(400).json({ error: 'Invalid player address. Use a BTC or Zenon address.' });
-
-  const enabledDepositAssets = getEnabledDepositAssets(SERVER_CONFIG);
-  if (!enabledDepositAssets.includes(depositAsset))
-    return res.status(400).json({ error: `Unsupported deposit asset. Options: ${enabledDepositAssets.join(', ')}` });
-
-  const activeGameIds = config.getActiveGameIds();
-  if (!activeGameIds.includes(gameId))
-    return res.status(400).json({ error: `Invalid game. Options: ${activeGameIds.join(', ')}` });
-
-  const validBets = depositAsset === ASSET.BTC
-    ? (config.get('payments.btcValidBets') || [])
-    : config.getValidBets();
-  const bet = parseFloat(betAmount);
-  if (!validBets.some(v => Math.abs(v - bet) < 0.001))
-    return res.status(400).json({ error: `Invalid bet. Options: ${validBets.join(', ')} ZNN` });
-
-  if (sessions.stats().total >= SERVER_CONFIG.MAX_SESSIONS)
-    return res.status(503).json({ error: 'Server at capacity, try again shortly' });
-
-  let quote = null;
   try {
-    quote = await buildQuote({
-      depositAsset,
-      depositAmount: bet,
-      paymentConfig: config.get('payments'),
+    const { session, quote, depositAddress, useTestMode, preferredPayoutAsset,
+            verification, gameMetadata } = await gameService.createSession({
+      playerAddress:         req.body?.playerAddress,
+      gameId:                req.body?.gameId,
+      betAmount:             req.body?.betAmount,
+      depositAsset:          req.body?.depositAsset,
+      preferredPayoutAsset:  req.body?.preferredPayoutAsset,
+      preferredPayoutAddress: req.body?.preferredPayoutAddress,
+      testMode:              req.body?.testMode,
+    });
+
+    res.json({
+      sessionId:     session.id,
+      state:         useTestMode ? 'DEPOSIT_CONFIRMED' : session.state,
+      depositAsset:  session.depositAsset,
+      depositTo:     useTestMode ? 'TEST MODE' : depositAddress,
+      depositAmount: useTestMode ? 0 : quote.depositAmount,
+      payoutAmount:  session.payoutAmount,
+      expiresAt:     session.expiresAt,
+      testMode:      useTestMode,
+      quote,
+      payoutOptions: quote.payoutOptions,
+      preferredPayoutAsset: preferredPayoutAsset || null,
+      instructions: useTestMode
+        ? ['Test mode enabled — no deposit required',
+           'Wins show simulated payout status instead of sending funds']
+        : [`Send exactly ${quote.depositAmount} ${session.depositAsset} to ${depositAddress}`,
+           req.body?.playerAddress ? `From your address: ${req.body.playerAddress}` : 'Keep the txid handy',
+           `Session expires in ${SERVER_CONFIG.DEPOSIT_TIMEOUT}s`],
+      verification,
+      gameMetadata,
     });
   } catch (err) {
-    return res.status(503).json({ error: err.message });
+    handleServiceError(err, res);
   }
-
-  if (preferredPayoutAsset) {
-    const enabledPayoutAssets = getEnabledPayoutAssets(SERVER_CONFIG);
-    if (!enabledPayoutAssets.includes(preferredPayoutAsset)) {
-      return res.status(400).json({ error: `Unsupported payout asset. Options: ${enabledPayoutAssets.join(', ')}` });
-    }
-    if (!isValidAddressForAsset(preferredPayoutAsset, preferredPayoutAddress)) {
-      return res.status(400).json({ error: `Invalid ${preferredPayoutAsset} payout address` });
-    }
-  }
-
-  const session = sessions.create({
-    playerAddress: playerAddress || null,
-    gameId,
-    betAmount:      bet,
-    depositTimeout: SERVER_CONFIG.DEPOSIT_TIMEOUT,
-    isTestMode:     useTestMode,
-  });
-  sessions.setQuote(session.id, quote);
-  session.depositAsset = depositAsset;
-  session.depositAmount = quote.depositAmount;
-  session.depositAddress = depositAsset === ASSET.BTC ? SERVER_CONFIG.BTC_DEPOSIT_ADDRESS : SERVER_CONFIG.PLATFORM_ADDRESS;
-  session.quote = quote;
-  session.payoutOptions = quote.payoutOptions;
-  if (preferredPayoutAsset) {
-    const option = getPayoutOption({ quote }, preferredPayoutAsset);
-    sessions.setPayoutChoice(session.id, {
-      asset: preferredPayoutAsset,
-      address: preferredPayoutAddress,
-      amount: option?.amount ?? null,
-      availableOptions: quote.payoutOptions,
-    });
-  }
-  sessions.setState(session.id, session.state, {
-    depositAsset,
-    depositAmount: quote.depositAmount,
-    depositAddress: session.depositAddress,
-    payoutOptions: quote.payoutOptions,
-    quote,
-  });
-
-  if (useTestMode) {
-    sessions.depositConfirmed(session.id);
-  }
-
-  res.json({
-    sessionId:     session.id,
-    state:         useTestMode ? 'DEPOSIT_CONFIRMED' : session.state,
-    depositAsset,
-    depositTo:     useTestMode ? 'TEST MODE' : session.depositAddress,
-    depositAmount: useTestMode ? 0 : quote.depositAmount,
-    payoutAmount:  session.payoutAmount,
-    expiresAt:     session.expiresAt,
-    testMode:      useTestMode,
-    quote,
-    payoutOptions: quote.payoutOptions,
-    preferredPayoutAsset: preferredPayoutAsset || null,
-    instructions: useTestMode
-      ? [
-        'Test mode enabled — no Zenon deposit required',
-        'Session is pre-authorized for local gameplay only',
-        'Wins will show simulated payout status instead of sending funds',
-      ]
-      : [
-        `Send exactly ${quote.depositAmount} ${depositAsset} to ${session.depositAddress}`,
-        playerAddress ? `From your address: ${playerAddress}` : 'Keep the txid handy for verification',
-        `Session expires in ${SERVER_CONFIG.DEPOSIT_TIMEOUT}s`,
-      ],
-    verification: {
-      ...(getGameSessionMetadata(gameId)?.verification || {}),
-      gameId,
-      sessionSeed: session.id,
-    },
-    gameMetadata: getGameSessionMetadata(gameId) || null,
-  });
 });
 
 app.get('/session/:id', validateSessionId, (req, res) => {
@@ -483,46 +436,17 @@ app.get('/session/:id', validateSessionId, (req, res) => {
   });
 });
 
-app.post('/session/:id/verify-deposit', validateSessionId, tooManyRequests(60_000, 10), async (req, res) => {
-  const s = sessions.get(req.params.id);
-  if (!s) return res.status(404).json({ error: 'Session not found' });
-  if (s.state !== 'PENDING_DEPOSIT')
-    return res.status(400).json({ error: `Session is ${s.state}, not PENDING_DEPOSIT` });
-
-  const { txHash } = req.body;
-  if (!txHash || txHash.length < 10)
-    return res.status(400).json({ error: 'Invalid transaction hash' });
-
-  if (sessions.isHashSeen(txHash))
-    return res.status(400).json({ error: 'Transaction hash already used' });
-
-  const depositAsset = normalizeAsset(s.depositAsset || ASSET.ZNN);
-  const result = depositAsset === ASSET.BTC
-    ? await verifyBtcDeposit({
-      txid: txHash,
-      expectedAddress: s.depositAddress || SERVER_CONFIG.BTC_DEPOSIT_ADDRESS,
-      expectedAmountBtc: s.depositAmount ?? s.quote?.depositAmount ?? s.betAmount,
-      minConfirmations: SERVER_CONFIG.BTC_MIN_CONFIRMATIONS || config.get('payments.btcMinConfirmations') || 1,
-      rpcConfig: getBtcNodeRpcConfig(),
-    })
-    : await verifyDeposit({
-      txHash,
-      expectedFrom:    s.playerAddress,
-      expectedAmount:  s.depositAmount ?? s.betAmount,
-      platformAddress: s.depositAddress || SERVER_CONFIG.PLATFORM_ADDRESS,
-      explorerApi:     SERVER_CONFIG.EXPLORER_API,
-    });
-
-  if (!result.valid)
-    return res.status(400).json({ error: `Deposit verification failed: ${result.reason}` });
-
-  sessions.depositFound(s.id, txHash);
-  sessions.depositConfirmed(s.id);
-  adminCtrl.health.recordSuccess('explorer');
-
-  feed.pushGamePlayed({ playerAddress: s.playerAddress, betAmount: s.betAmount, gameId: s.gameId, won: false });
-
-  res.json({ success: true, state: 'DEPOSIT_CONFIRMED', asset: depositAsset, amount: result.amount || result.amountBtc, txHash });
+app.post('/session/:id/verify-deposit', validateSessionId, tooManyRequests(60_000, 10),
+  payoutLock.middleware(req => `session:${req.params.id}`),
+  async (req, res) => {
+  try {
+    const { asset, amount, txHash } = await gameService.verifyDeposit(
+      req.params.id, req.body?.txHash
+    );
+    res.json({ success: true, state: 'DEPOSIT_CONFIRMED', asset, amount, txHash });
+  } catch (err) {
+    handleServiceError(err, res);
+  }
 });
 
 app.post('/session/:id/start', validateSessionId, (req, res) => {
@@ -539,115 +463,51 @@ app.post(
   '/session/:id/result',
   validateSessionId,
   tooManyRequests(60_000, 5),
+  payoutLock.middleware(req => `session:${req.params.id}`),
   async (req, res) => {
-  const s = sessions.get(req.params.id);
-  if (!s) return res.status(404).json({ error: 'Session not found' });
-  if (s.state !== 'GAME_ACTIVE')
-    return res.status(400).json({ error: `Cannot submit result — session is ${s.state}` });
-
-  const verification = verifyGameResult(s, req.body || {});
-  if (!verification.valid) {
-    return res.status(400).json({ error: verification.reason });
-  }
-
-  sessions.gameEnded(s.id, {
-    won: verification.won,
-    score: verification.score || 0,
-    details: verification.details || null,
-  });
-
-  // Track engagement
-  adminCtrl.engagement.trackGamePlayed(s.gameId, s.betAmount, verification.won, verification.won ? s.payoutAmount : 0);
-
-  if (verification.won) {
-    const refreshed = sessions.get(s.id);
-    const payoutOptions = refreshed?.quote?.payoutOptions || s.quote?.payoutOptions || [];
-
-    if (s.isTestMode) {
-      const preferred = refreshed?.payoutChoice || s.payoutChoice || payoutOptions[0] || null;
-      if (preferred) {
-        sessions.setPayoutChoice(s.id, {
-          asset: preferred.asset,
-          address: preferred.address || s.playerAddress || null,
-          amount: preferred.amount,
-          availableOptions: payoutOptions,
-        });
-      }
-      const testTxHash = `test-${s.id}`;
-      sessions.payoutSent(s.id, testTxHash);
-    } else if (refreshed?.payoutChoice?.asset && refreshed?.payoutChoice?.address) {
-      worker.queuePayout(s.id);
-      feed.pushWin({ playerAddress: refreshed.payoutChoice.address, amountZnn: refreshed.payoutChoice.asset === ASSET.ZNN ? refreshed.payoutChoice.amount : s.payoutAmount, gameId: s.gameId });
-      bot.announceWin(refreshed.payoutChoice.address, refreshed.payoutChoice.asset === ASSET.ZNN ? refreshed.payoutChoice.amount : s.payoutAmount, s.gameId);
-    } else {
-      sessions.awaitingPayoutChoice(s.id, { payoutOptions });
-      return res.json({
-        success: true,
-        result: 'WIN',
-        requiresPayoutChoice: true,
-        payoutOptions,
-        message: 'Choose BTC or ZNN payout to finalize your win.',
-      });
+  try {
+    const outcome = await gameService.submitResult(req.params.id, req.body || {});
+    if (!outcome.won) {
+      return res.json({ success: true, result: 'LOSS', verification: outcome.verification, message: 'Better luck next time.' });
     }
-
+    if (outcome.requiresPayoutChoice) {
+      return res.json({ success: true, result: 'WIN', requiresPayoutChoice: true,
+        payoutOptions: outcome.payoutOptions, message: 'Choose BTC or ZNN payout to finalize your win.' });
+    }
     res.json({
       success:      true,
       result:       'WIN',
-      payoutAmount: refreshed?.payoutChoice?.amount || s.payoutAmount,
-      payoutAsset: refreshed?.payoutChoice?.asset || s.payoutAsset || null,
-      payoutOptions,
-      verification: verification.details || null,
-      message:      s.isTestMode
-        ? `Test win recorded. No real payout was sent.`
-        : `Payout queued via ${refreshed?.payoutChoice?.asset || 'selected rail'}`,
+      payoutAmount: outcome.payoutAmount,
+      payoutAsset:  outcome.payoutAsset,
+      payoutOptions: outcome.payoutOptions,
+      verification: outcome.verification,
+      message:      outcome.testMode
+        ? 'Test win recorded. No real payout was sent.'
+        : `Payout queued via ${outcome.payoutAsset || 'selected rail'}`,
     });
-  } else {
-    res.json({ success: true, result: 'LOSS', verification: verification.details || null, message: 'Better luck next time.' });
+  } catch (err) {
+    handleServiceError(err, res);
   }
-}
-);
+});
 
-app.post('/session/:id/payout-choice', validateSessionId, tooManyRequests(60_000, 10), (req, res) => {
-  const s = sessions.get(req.params.id);
-  if (!s) return res.status(404).json({ error: 'Session not found' });
-  if (!['AWAITING_PAYOUT_CHOICE', 'GAME_WON'].includes(s.state)) {
-    return res.status(400).json({ error: `Cannot choose payout while session is ${s.state}` });
+app.post('/session/:id/payout-choice', validateSessionId, tooManyRequests(60_000, 10),
+  payoutLock.middleware(req => `session:${req.params.id}`),
+  (req, res) => {
+  try {
+    const choice = gameService.choosePayoutRail(
+      req.params.id,
+      req.body?.asset,
+      String(req.body?.address || '').trim()
+    );
+    res.json({
+      success:     true,
+      state:       'GAME_WON',
+      payoutChoice: choice,
+      message:     `Payout queued via ${choice.asset}`,
+    });
+  } catch (err) {
+    handleServiceError(err, res);
   }
-
-  const asset = normalizeAsset(req.body?.asset);
-  const address = String(req.body?.address || '').trim();
-  const enabledPayoutAssets = getEnabledPayoutAssets(SERVER_CONFIG);
-  if (!enabledPayoutAssets.includes(asset)) {
-    return res.status(400).json({ error: `Unsupported payout asset. Options: ${enabledPayoutAssets.join(', ')}` });
-  }
-  if (!isValidAddressForAsset(asset, address)) {
-    return res.status(400).json({ error: `Invalid ${asset} payout address` });
-  }
-
-  const option = getPayoutOption(s, asset);
-  if (!option) {
-    return res.status(400).json({ error: `Payout asset ${asset} is not available for this session` });
-  }
-
-  sessions.setPayoutChoice(s.id, {
-    asset,
-    address,
-    amount: option.amount,
-    availableOptions: s.quote?.payoutOptions || [],
-  });
-  sessions.setState(s.id, 'GAME_WON', { note: `payout choice selected: ${asset}` });
-  worker.queuePayout(s.id);
-
-  return res.json({
-    success: true,
-    state: 'GAME_WON',
-    payoutChoice: {
-      asset,
-      address,
-      amount: option.amount,
-    },
-    message: `Payout queued via ${asset}`,
-  });
 });
 
 app.get('/session/:id/payout-status', validateSessionId, (req, res) => {
@@ -919,6 +779,108 @@ app.get('/feed/recent', (req, res) => {
 });
 
 // ─────────────────────────────────────────
+// GAME HALL CREDITS API
+// Deposit once → play multiple games → cash out remainder
+// ─────────────────────────────────────────
+
+/**
+ * POST /credit/create
+ * Create a game pass (credit balance).
+ * Body: { playerAddress, depositAsset, depositAmount, creditAmount? }
+ * Returns: { passId, depositAddress, depositAmount, depositAsset, expiresAt }
+ */
+app.post('/credit/create', tooManyRequests(60_000, 10), async (req, res) => {
+  try {
+    const { pass, depositAddress } = await creditService.createPass({
+      playerAddress: req.body?.playerAddress,
+      depositAsset:  req.body?.depositAsset,
+      depositAmount: req.body?.depositAmount,
+    });
+    res.json({
+      passId:        pass.id,
+      depositAddress,
+      depositAmount: pass.depositAmount,
+      depositAsset:  pass.depositAsset,
+      creditAmount:  pass.creditAmount,
+      expiresAt:     pass.expiresAt,
+      state:         pass.state,
+    });
+  } catch (err) {
+    handleServiceError(err, res);
+  }
+});
+
+/**
+ * POST /credit/:passId/verify-deposit
+ * Verify the deposit and activate the pass.
+ * Body: { txHash }
+ */
+app.post('/credit/:passId/verify-deposit', tooManyRequests(60_000, 10),
+  payoutLock.middleware(req => `credit:${req.params.passId}`),
+  async (req, res) => {
+  try {
+    const active = await creditService.verifyDeposit(req.params.passId, req.body?.txHash);
+    res.json({ ok: true, passId: active.id, balance: active.balance, state: active.state });
+  } catch (err) {
+    handleServiceError(err, res);
+  }
+});
+
+/**
+ * GET /credit/pass/:playerAddress
+ * Get the active game pass for a player.
+ */
+app.get('/credit/pass/:playerAddress', (req, res) => {
+  const pass = credits.getActivePass(req.params.playerAddress);
+  if (!pass) return res.status(404).json({ error: 'No active pass' });
+  res.json({
+    passId:        pass.id,
+    balance:       pass.balance,
+    state:         pass.state,
+    confirmedAt:   pass.confirmedAt,
+    passExpiresAt: pass.passExpiresAt,
+    rounds:        pass.rounds.length,
+  });
+});
+
+/**
+ * GET /credit/:passId
+ * Full pass state.
+ */
+app.get('/credit/:passId', (req, res) => {
+  const pass = credits.get(req.params.passId);
+  if (!pass) return res.status(404).json({ error: 'Pass not found' });
+  res.json(pass);
+});
+
+/**
+ * POST /credit/:passId/cashout
+ * Request cashout of remaining credits.
+ * Body: { payoutAsset, payoutAddress }
+ */
+app.post('/credit/:passId/cashout', tooManyRequests(60_000, 5),
+  payoutLock.middleware(req => `credit:${req.params.passId}`),
+  (req, res) => {
+  try {
+    const result = creditService.requestCashout(req.params.passId, {
+      payoutAsset:    req.body?.payoutAsset,
+      payoutAddress:  req.body?.payoutAddress,
+    });
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    handleServiceError(err, res);
+  }
+});
+
+/**
+ * GET /credit/stats
+ * Platform-wide credit stats.
+ */
+app.get('/credit/stats', (req, res) => {
+  res.json(credits.stats());
+});
+
+// ─────────────────────────────────────────
 // ADMIN API
 // All routes expose live operational data.
 // The bot reads these to make decisions;
@@ -934,7 +896,9 @@ app.use('/admin', requireAdminAuth, tooManyRequests(60_000, 60));
  * Full operational health snapshot
  */
 app.get('/admin/health', (req, res) => {
-  res.json(adminCtrl.getFullHealth(sessions, markets));
+  const health = adminCtrl.getFullHealth(sessions, markets);
+  health.payoutLock = { heldKeys: payoutLock.size() };
+  res.json(health);
 });
 
 /**

@@ -273,12 +273,24 @@ class PersistentStateStore {
     this.db.prepare(`DELETE FROM sessions WHERE id = ?`).run(sessionId);
   }
 
+  /**
+   * Returns [hash, seen_at] pairs so TTL can be preserved across restarts.
+   */
   getSeenHashes() {
     return this.db.prepare(`
-      SELECT hash
+      SELECT hash, seen_at
       FROM seen_hashes
       ORDER BY seen_at ASC
-    `).all().map((row) => row.hash);
+    `).all().map((row) => [row.hash, row.seen_at]);
+  }
+
+  /**
+   * Fast O(1) single-hash lookup — avoids loading all hashes into memory.
+   */
+  isHashSeen(hash) {
+    return !!this.db.prepare(`
+      SELECT 1 FROM seen_hashes WHERE hash = ? LIMIT 1
+    `).get(hash);
   }
 
   addSeenHash(hash) {
@@ -287,6 +299,19 @@ class PersistentStateStore {
       VALUES (?, ?)
       ON CONFLICT(hash) DO NOTHING
     `).run(hash, Date.now());
+  }
+
+  /**
+   * Evict seen_hashes older than ttlMs from the DB.
+   * Called by the cleanup scheduler to mirror the in-memory eviction.
+   */
+  evictOldSeenHashes(ttlMs) {
+    const cutoff = Date.now() - ttlMs;
+    const result = this.db.prepare(`
+      DELETE FROM seen_hashes WHERE seen_at < ?
+    `).run(cutoff);
+    if (result.changes > 0)
+      console.log(`[storage] Evicted ${result.changes} stale tx hashes from DB`);
   }
 
   // ── MARKETS ─────────────────────────────────────────────
@@ -659,7 +684,12 @@ class PersistentStateStore {
   _initSchema() {
     this.db.exec(`
       PRAGMA journal_mode = WAL;
-      PRAGMA synchronous = NORMAL;
+      -- FULL sync: every write is flushed before the call returns.
+      -- Slower than NORMAL but eliminates data loss on power failure.
+      -- Required for a real-money platform.
+      PRAGMA synchronous = FULL;
+      -- Keep WAL auto-checkpointed at a reasonable size
+      PRAGMA wal_autocheckpoint = 1000;
 
       CREATE TABLE IF NOT EXISTS state_snapshots (
         scope TEXT PRIMARY KEY,
@@ -783,6 +813,45 @@ class PersistentStateStore {
         last_updated_at INTEGER,
         payload_json TEXT NOT NULL
       );
+
+      -- ── INDEXES ─────────────────────────────────────────
+      -- These cover the hot query paths and prevent full-table scans.
+
+      -- Sessions: deposit polling reads by state + expiry
+      CREATE INDEX IF NOT EXISTS idx_sessions_state
+        ON sessions(state, expires_at);
+
+      -- Sessions: player history lookup
+      CREATE INDEX IF NOT EXISTS idx_sessions_player
+        ON sessions(player_address);
+
+      -- Markets: open market listing (most common read)
+      CREATE INDEX IF NOT EXISTS idx_markets_state_pool
+        ON markets(state, total_pool DESC);
+
+      -- Markets: category filter (sports vs crypto)
+      CREATE INDEX IF NOT EXISTS idx_markets_category
+        ON markets(category, state);
+
+      -- Markets: resolution due-date scan
+      CREATE INDEX IF NOT EXISTS idx_markets_resolves_at
+        ON markets(resolves_at, state);
+
+      -- Positions: market breakdown
+      CREATE INDEX IF NOT EXISTS idx_positions_market
+        ON market_positions(market_id, state);
+
+      -- Positions: player history
+      CREATE INDEX IF NOT EXISTS idx_positions_player
+        ON market_positions(player_address);
+
+      -- Payout queue: next-up ordering
+      CREATE INDEX IF NOT EXISTS idx_payout_queue_next
+        ON payout_queue(next_attempt_at);
+
+      -- Seen hashes: TTL eviction scan
+      CREATE INDEX IF NOT EXISTS idx_seen_hashes_seen_at
+        ON seen_hashes(seen_at);
     `);
   }
 
@@ -824,7 +893,7 @@ class PersistentStateStore {
     if (sessionCount > 0) {
       snapshot.sessions = {
         sessions: this.db.prepare(`SELECT payload_json FROM sessions ORDER BY created_at ASC`).all().map((row) => safeJson(row.payload_json, {})),
-        seenHashes: this.db.prepare(`SELECT hash FROM seen_hashes ORDER BY seen_at ASC`).all().map((row) => row.hash),
+        seenHashes: this.db.prepare(`SELECT hash, seen_at FROM seen_hashes ORDER BY seen_at ASC`).all().map((row) => [row.hash, row.seen_at]),
       };
     }
 
@@ -893,8 +962,10 @@ class PersistentStateStore {
       );
     }
 
-    for (const hash of state.seenHashes || []) {
-      insertHash.run(hash, Date.now());
+    for (const entry of state.seenHashes || []) {
+      // Support both old format (string) and new format ([hash, seenAt])
+      const [hash, seenAt] = Array.isArray(entry) ? entry : [entry, Date.now()];
+      insertHash.run(hash, seenAt);
     }
   }
 
