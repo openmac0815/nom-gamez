@@ -74,6 +74,7 @@ const defaultConfig = {
     maxPayoutZnn:      2.0,
     claimWindowMs:     10 * 60 * 1000,
     maxPerIpPerDay:    2,
+    enableUnsafeFreeplay: true, // Set to true now that IP/address rate limits are implemented
   },
 
   // ── PUBLISHER ─────────────────────────────────────────────
