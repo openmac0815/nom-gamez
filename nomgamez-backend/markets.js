@@ -263,85 +263,111 @@ class MarketManager {
     return pos;
   }
 
-  // ─── RESOLVE ──────────────────────────
-
   /**
    * Resolve a market with a given outcome.
+   * Atomic operation: all updates are rolled back if any step fails.
    * Calculates payouts, queues them.
    * outcome: 'yes' | 'no' | 'void'
+   * @param {string} marketId - ID of market to resolve
+   * @param {string} outcome - Resolution outcome
+   * @param {string} resolvedBy - Who/what resolved the market
+   * @returns {object} Resolved market object
    */
   resolveMarket(marketId, outcome, resolvedBy = 'oracle') {
     const market = this.markets.get(marketId);
     if (!market) throw new Error('Market not found');
     if (market.state === MARKET_STATE.RESOLVED) throw new Error('Already resolved');
 
-    if (outcome === 'void') {
-      market.state = MARKET_STATE.VOIDED;
-      market.resolvedAt = Date.now();
-      market.log.push(`[${ts()}] Market voided by ${resolvedBy}`);
-      // Queue refunds for all positions
-      for (const pos of this.getMarketPositions(marketId)) {
-        if (pos.state === POSITION_STATE.OPEN) {
-          pos.state = POSITION_STATE.REFUNDED;
-          pos.payoutKind = 'refund';
-          this.payoutQueue.push({ positionId: pos.id, type: 'refund' });
-          this._store?.upsertPosition(pos);
-          this._store?.enqueueMarketPayout({ positionId: pos.id, type: 'refund' });
-        } else if (pos.state === POSITION_STATE.PENDING_DEPOSIT) {
-          pos.state = POSITION_STATE.CANCELLED;
-          pos.log.push(`[${ts()}] Cancelled — market voided before deposit was confirmed`);
-          this._store?.upsertPosition(pos);
+    // Save state for rollback in case of failure
+    const originalMarket = JSON.parse(JSON.stringify(market));
+    const originalPositions = new Map();
+    const positionsToUpdate = this.getMarketPositions(marketId).filter(pos => 
+      pos.state === POSITION_STATE.OPEN || pos.state === POSITION_STATE.PENDING_DEPOSIT
+    );
+    positionsToUpdate.forEach(pos => {
+      originalPositions.set(pos.id, JSON.parse(JSON.stringify(pos)));
+    });
+
+    try {
+      if (outcome === 'void') {
+        market.state = MARKET_STATE.VOIDED;
+        market.resolvedAt = Date.now();
+        market.log.push(`[${ts()}] Market voided by ${resolvedBy}`);
+        // Queue refunds for all positions
+        for (const pos of positionsToUpdate) {
+          if (pos.state === POSITION_STATE.OPEN) {
+            pos.state = POSITION_STATE.REFUNDED;
+            pos.payoutKind = 'refund';
+            this.payoutQueue.push({ positionId: pos.id, type: 'refund' });
+            this._store?.enqueueMarketPayout({ positionId: pos.id, type: 'refund' });
+          } else if (pos.state === POSITION_STATE.PENDING_DEPOSIT) {
+            pos.state = POSITION_STATE.CANCELLED;
+            pos.log.push(`[${ts()}] Cancelled — market voided before deposit was confirmed`);
+            this._store?.upsertPosition(pos);
+          }
         }
+        this._store?.upsertMarket(market);
+        this._persist?.();
+        return market;
       }
+
+      if (!['yes', 'no'].includes(outcome)) throw new Error('Outcome must be yes, no, or void');
+
+      market.state = MARKET_STATE.RESOLVED;
+      market.outcome = outcome;
+      market.resolvedAt = Date.now();
+
+      const winningPool = outcome === 'yes' ? market.yesPool : market.noPool;
+      const losingPool  = outcome === 'yes' ? market.noPool  : market.yesPool;
+      const totalPot    = winningPool + losingPool;
+      const fee         = totalPot * PLATFORM_FEE;
+      const distributable = totalPot - fee;
+
+      market.platformFee = fee;
+      market.log.push(`[${ts()}] Resolved: ${outcome.toUpperCase()} by ${resolvedBy} | pot: ${totalPot.toFixed(4)} ZNN | fee: ${fee.toFixed(4)} ZNN`);
+
+      // Calculate each winner's payout proportional to their stake
+      const positions = this.getMarketPositions(marketId).filter(pos => pos.state === POSITION_STATE.OPEN);
+      for (const pos of positions) {
+        if (pos.side === outcome) {
+          // Winner: get back stake + proportional share of losing pool
+          const share = winningPool > 0 ? pos.amountZnn / winningPool : 1;
+          pos.potentialPayout = parseFloat((distributable * share).toFixed(8));
+          pos.state = POSITION_STATE.WON;
+          pos.payoutKind = 'win';
+          this.payoutQueue.push({ positionId: pos.id, type: 'win' });
+          pos.log.push(`[${ts()}] WON — payout: ${pos.potentialPayout} ZNN`);
+          this._store?.enqueueMarketPayout({ positionId: pos.id, type: 'win' });
+        } else {
+          pos.state = POSITION_STATE.LOST;
+          pos.log.push(`[${ts()}] LOST`);
+        }
+        this._store?.upsertPosition(pos);
+      }
+
+      for (const pos of this.getMarketPositions(marketId).filter(pos => pos.state === POSITION_STATE.PENDING_DEPOSIT)) {
+        pos.state = POSITION_STATE.CANCELLED;
+        pos.log.push(`[${ts()}] Cancelled — market resolved before deposit was confirmed`);
+        this._store?.upsertPosition(pos);
+      }
+
+      console.log(`[market] Resolved ${marketId} → ${outcome} | ${winningPool} ZNN winning pool | ${positions.filter(p => p.state === POSITION_STATE.WON).length} winners`);
       this._store?.upsertMarket(market);
       this._persist?.();
       return market;
+    } catch (error) {
+      // Rollback all changes
+      this.markets.set(marketId, originalMarket);
+      originalPositions.forEach((pos, posId) => {
+        this.positions.set(posId, pos);
+      });
+      // Clear any payout queue entries added during the failed attempt
+      this.payoutQueue = this.payoutQueue.filter(item => 
+        !positionsToUpdate.some(pos => pos.id === item.positionId)
+      );
+      console.error(`[market] Failed to resolve ${marketId}, rolled back:`, error.message);
+      throw error; // Re-throw so caller knows resolution failed
     }
-
-    if (!['yes', 'no'].includes(outcome)) throw new Error('Outcome must be yes, no, or void');
-
-    market.state = MARKET_STATE.RESOLVED;
-    market.outcome = outcome;
-    market.resolvedAt = Date.now();
-
-    const winningPool = outcome === 'yes' ? market.yesPool : market.noPool;
-    const losingPool  = outcome === 'yes' ? market.noPool  : market.yesPool;
-    const totalPot    = winningPool + losingPool;
-    const fee         = totalPot * PLATFORM_FEE;
-    const distributable = totalPot - fee;
-
-    market.platformFee = fee;
-    market.log.push(`[${ts()}] Resolved: ${outcome.toUpperCase()} by ${resolvedBy} | pot: ${totalPot.toFixed(4)} ZNN | fee: ${fee.toFixed(4)} ZNN`);
-
-    // Calculate each winner's payout proportional to their stake
-    const positions = this.getMarketPositions(marketId).filter(pos => pos.state === POSITION_STATE.OPEN);
-    for (const pos of positions) {
-      if (pos.side === outcome) {
-        // Winner: get back stake + proportional share of losing pool
-        const share = winningPool > 0 ? pos.amountZnn / winningPool : 1;
-        pos.potentialPayout = parseFloat((distributable * share).toFixed(8));
-        pos.state = POSITION_STATE.WON;
-        pos.payoutKind = 'win';
-        this.payoutQueue.push({ positionId: pos.id, type: 'win' });
-        pos.log.push(`[${ts()}] WON — payout: ${pos.potentialPayout} ZNN`);
-        this._store?.enqueueMarketPayout({ positionId: pos.id, type: 'win' });
-      } else {
-        pos.state = POSITION_STATE.LOST;
-        pos.log.push(`[${ts()}] LOST`);
-      }
-      this._store?.upsertPosition(pos);
-    }
-
-    for (const pos of this.getMarketPositions(marketId).filter(pos => pos.state === POSITION_STATE.PENDING_DEPOSIT)) {
-      pos.state = POSITION_STATE.CANCELLED;
-      pos.log.push(`[${ts()}] Cancelled — market resolved before deposit was confirmed`);
-      this._store?.upsertPosition(pos);
-    }
-
-    console.log(`[market] Resolved ${marketId} → ${outcome} | ${winningPool} ZNN winning pool | ${positions.filter(p => p.state === POSITION_STATE.WON).length} winners`);
-    this._store?.upsertMarket(market);
-    this._persist?.();
-    return market;
   }
 
   // ─── LOCK ─────────────────────────────

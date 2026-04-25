@@ -39,6 +39,7 @@ const defaultConfig = {
     maxOpenMarkets:      15,
     marketsPerCycle:     3,
     archiveAgeDays:      7,
+    enableUnsafeMarkets: true, // Set to true only when atomic settlement is implemented
   },
 
   // ── BOT ───────────────────────────────────────────────────
