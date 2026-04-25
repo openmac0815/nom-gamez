@@ -5,7 +5,7 @@ const path = require('node:path');
 
 const PROJECT_DIR = path.join(__dirname, '..');
 
-test('smoke endpoints respond when server boots', { skip: process.env.RUN_SMOKE_API_TESTS !== 'true' }, async (t) => {
+test('smoke endpoints respond when server boots', async (t) => {
   const port = 43111 + Math.floor(Math.random() * 1000);
   const child = spawn(process.execPath, ['server.js'], {
     cwd: PROJECT_DIR,
