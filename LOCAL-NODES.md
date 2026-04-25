@@ -27,6 +27,8 @@ docker run -d \
 
 Wait for the node to sync (~2-3 hours for full sync).
 
+**Note:** This image only includes `znnd-amd64` (no `znn-cli`). The NOM-GAMEZ backend connects via WebSocket, so CLI isn't needed.
+
 ### 2. Bitcoin Node (bitcoind)
 Using Docker:
 
@@ -102,8 +104,14 @@ ADMIN_TOKEN=your_strong_random_admin_token_here
 ## Verifying It Works
 
 ### 1. Check Zenon Node
+Since the Docker image doesn't include `znn-cli`, check the logs:
 ```bash
-docker exec zenon-node znn-cli getinfo
+docker logs zenon-node --tail 50
+```
+
+Or check if the process is running:
+```bash
+docker exec zenon-node ps aux | grep znnd
 ```
 
 ### 2. Check Bitcoin Node
@@ -126,8 +134,14 @@ docker-compose logs -f backend
 ## Troubleshooting
 
 ### Zenon Node Not Syncing
+Check the logs (no CLI available in this image):
 ```bash
 docker logs zenon-node --tail 50
+```
+
+If the node crashed, check available resources:
+```bash
+docker stats zenon-node
 ```
 
 ### Bitcoin RPC Connection Failed
