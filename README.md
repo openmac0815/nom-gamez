@@ -10,6 +10,16 @@ Provably fair crypto-gaming and prediction market platform built on Zenon Networ
 - **Dice Roll:** Adjustable win chance, instant payouts
 - **Slots:** Classic slot machine with crypto rewards
 - **Space Shooter:** Provably fair deterministic gameplay (replayable for verification)
+- **Coinflip:** Simple 50/50 heads or tails — instant results
+- **Roulette:** European roulette with multiple bet types (straight, red/black, odd/even)
+- **Crash:** Watch the multiplier rise — cash out before it crashes!
+
+### 🤖 AI-Native Features
+- **Self-Monitoring:** LLM-optimized `/admin/ai/status` endpoint
+- **Natural Language Control:** Control the platform with plain English commands
+- **Self-Healing:** Automatic recovery from common failures
+- **Model-Agnostic:** Works with OpenRouter, OpenAI, or local LLMs (Ollama)
+- **Dynamic Config:** Live configuration changes without restart
 
 ### 📈 Prediction Markets
 - Atomic settlement with proper payouts
@@ -19,16 +29,25 @@ Provably fair crypto-gaming and prediction market platform built on Zenon Networ
 
 ### 🔒 Security & Fairness
 - Provably fair game logic with seed commitment
-- Replayable deterministic shooter game
+- Replayable deterministic games (shooter, dice, coinflip, roulette, crash)
 - Atomic market settlement (rollback on failure)
 - IP/address rate limits for free play
 - Zenon and BTC wallet integration
+- Admin token authentication for all admin endpoints
 
 ### 🐳 Infrastructure
 - One-command startup with Docker + docker-compose
 - GitHub Actions CI/CD (tests, linting, Docker build)
 - Modern React + Vite frontend
 - Responsive design for mobile/desktop
+- Healthchecks and auto-restart policies
+- Self-healing monitor for autonomous operation
+
+### 🤖 AI Control
+- **Natural Language Commands:** `POST /admin/ai/command`
+- **AI Status Endpoint:** `GET /admin/ai/status` (LLM-optimized)
+- **Self-Healing:** Automatic recovery from stale sessions, stuck circuits, etc.
+- See [AI-NATIVE.md](AI-NATIVE.md) and [SELF-CONTROL.md](SELF-CONTROL.md) for details
 
 ## Quick Start
 
@@ -80,6 +99,7 @@ docker-compose up -d
 - `games`: Enable/disable individual games, adjust payout multipliers
 - `market`: Market creation rules, fee percentage, position limits
 - `freePlay`: Free play settings, win probability, rate limits
+- `ai`: AI/LLM integration settings (provider, model, API key)
 - `enableUnsafeMarkets`: Set to `true` (atomic settlement implemented)
 - `enableUnsafeFreeplay`: Set to `true` (rate limits implemented)
 
@@ -89,8 +109,14 @@ Copy `nomgamez-backend/.env.example` to `.env` and fill in:
 - `PLATFORM_ADDRESS`: Corresponding Zenon address
 - `BTC_DEPOSIT_ADDRESS`: Your BTC deposit address
 - `ZNN_NODE_URL`: Zenon node URL (default: wss://node.zenon.fun:35998)
+- `ADMIN_TOKEN`: Secret token for admin API access (required for AI commands)
+- `AI_API_KEY`: Your OpenRouter/OpenAI API key (for AI features)
 
 ## Documentation
+
+### AI-Native Features
+- [AI-NATIVE.md](AI-NATIVE.md) — AI architecture and vision
+- [SELF-CONTROL.md](SELF-CONTROL.md) — Self-management capabilities
 
 ### JSDoc
 All new/modified code includes JSDoc comments. To generate docs:
@@ -117,13 +143,18 @@ npm test  # Runs all tests including smoke tests
 ## API Endpoints
 
 ### Public Endpoints
-- `GET /health` - Health check
+- `GET /health` - Basic health check
+- `GET /ready` - Comprehensive readiness check (for Docker)
+- `GET /info` - Platform info and active games
 - `GET /api/games` - List available games
 - `GET /api/markets/open` - List open prediction markets
 - `POST /api/games/:id/play` - Play a game
 - `POST /api/markets/:id/position` - Take market position
 
 ### Admin Endpoints (require `ADMIN_TOKEN`)
+- `GET /admin/ai/status` - **AI-native status** (LLM-optimized)
+- `POST /admin/ai/command` - **Natural language commands**
+- `GET /admin/health` - Full health snapshot
 - `GET /admin/treasury` - Treasury balance/liability data
 - `GET /admin/stats` - Platform statistics
 - `POST /admin/config` - Update runtime config

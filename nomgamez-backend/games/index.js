@@ -1,11 +1,17 @@
 const { createDicePlugin } = require('./dice');
 const { createSlotsPlugin } = require('./slots');
 const { createShooterPlugin } = require('./shooter');
+const { createCoinflipPlugin } = require('./coinflip');
+const { createRoulettePlugin } = require('./roulette');
+const { createCrashPlugin } = require('./crash');
 
 const pluginFactories = [
   createDicePlugin,
   createSlotsPlugin,
   createShooterPlugin,
+  createCoinflipPlugin,
+  createRoulettePlugin,
+  createCrashPlugin,
 ];
 
 const plugins = new Map(pluginFactories.map((factory) => {

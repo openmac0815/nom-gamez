@@ -29,6 +29,8 @@ const { CreditManager } = require('./credits');
 const { payoutLock }   = require('./payout-lock');
 const { GameService, ServiceError } = require('./game-service');
 const { CreditService }             = require('./credit-service');
+const { parseCommand, executeCommand } = require('./ai-command-parser');
+const { selfHealer } = require('./self-healing');
 const {
   ASSET,
   normalizeAsset,
@@ -1117,6 +1119,147 @@ app.get('/admin/config/history', (req, res) => {
   res.json({ history: config.getHistory(limit) });
 });
 
+/**
+ * GET /admin/ai/status
+ * AI-Native Self-Monitoring Endpoint
+ * Provides LLM-optimized platform state for autonomous decision-making
+ * Token-efficient, structured for easy parsing
+ */
+app.get('/admin/ai/status', (req, res) => {
+  const now = Date.now();
+  const health = adminCtrl.getFullHealth(sessions, markets);
+  const treasuryStatus = treasury.getStatus();
+  const payoutMetrics = adminCtrl.payouts.getStats();
+
+  // AI-optimized compact status
+  const aiStatus = {
+    // Core state
+    ts: now,
+    uptime_h: parseFloat(((now - adminCtrl.startTime) / 3600000).toFixed(2)),
+    healthy: health.isHealthy && !adminCtrl.alerts.hasCritical(),
+
+    // Services status (compact)
+    services: {
+      oracle:  health.services.oracle.ok ? 1 : 0,
+      explorer: health.services.explorer.ok ? 1 : 0,
+      zenon:   health.services.zenonNode.ok ? 1 : 0,
+      payoutWorker: health.services.payoutWorker?.ok ? 1 : 0,
+    },
+
+    // Active alerts (critical only)
+    alerts: {
+      critical: adminCtrl.alerts.getActive('critical').map(a => ({
+        type: a.type,
+        msg: a.message.slice(0, 80),
+        since: Math.round((now - a.raisedAt) / 60000), // mins ago
+      })),
+      warn: adminCtrl.alerts.getActive('warn').length,
+    },
+
+    // Treasury health
+    treasury: {
+      balance_znn: treasuryStatus.balanceZnn,
+      liabilities_znn: treasuryStatus.totalLiabilityZnn,
+      reserve_ok: treasuryStatus.balanceZnn >= config.get('treasury.minReserveZnn'),
+      halted: {
+        payouts: treasuryStatus.haltPayouts || false,
+        bot: treasuryStatus.haltBot || false,
+      },
+    },
+
+    // Payout status
+    payouts: {
+      queue_depth: payoutMetrics.queueDepth,
+      circuit_open: payoutMetrics.circuitOpen,
+      success_rate: health.payouts?.payoutMetrics?.last24hSuccessPct || null,
+    },
+
+    // Games status
+    games: config.getActiveGameIds(),
+
+    // Markets status
+    markets: {
+      open: health.markets?.open || 0,
+      locked: health.markets?.locked || 0,
+      needs_resolution: markets.getMarketsNeedingResolution?.()?.length || 0,
+    },
+
+    // Session stats
+    sessions: {
+      active: health.sessions?.active || 0,
+      pending: health.sessions?.pending || 0,
+    },
+
+    // Bot status
+    bot: {
+      running: bot.running,
+      last_research: bot.lastResearchMs ? Math.round((now - bot.lastResearchMs) / 60000) : null,
+    },
+
+    // Actionable insights for AI
+    actions_needed: [
+      ...(payoutMetrics.circuitOpen ? ['RESET_CIRCUIT_BREAKER'] : []),
+      ...(adminCtrl.alerts.hasCritical() ? ['REVIEW_CRITICAL_ALERTS'] : []),
+      ...(treasuryStatus.haltPayouts && !payoutMetrics.circuitOpen ? ['RESUME_PAYOUTS'] : []),
+      ...(health.markets?.locked > 5 ? ['RESOLVE_STUCK_MARKETS'] : []),
+      ...(health.sessions?.pending > 20 ? ['CLEANUP_STALE_SESSIONS'] : []),
+    ],
+  };
+
+  res.json(aiStatus);
+});
+
+/**
+ * POST /admin/ai/command
+ * Natural Language Command Interface
+ * Parse and execute NL commands for autonomous operation
+ */
+app.post('/admin/ai/command', tooManyRequests(60_000, 30), async (req, res) => {
+  const { command } = req.body;
+  if (!command || typeof command !== 'string') {
+    return res.status(400).json({ error: 'command (string) is required in request body' });
+  }
+
+  try {
+    // Parse the natural language command
+    const parsed = await parseCommand(command);
+
+    if (parsed.type === 'unknown') {
+      return res.status(400).json({
+        success: false,
+        error: 'Could not parse command',
+        original: parsed.original,
+        suggestions: ['Try: "pause dice game"', 'Try: "check status"', 'Try: "reset circuit breaker"'],
+      });
+    }
+
+    // Execute the parsed command
+    const result = await executeCommand(parsed, {
+      bot,
+      worker,
+      treasury,
+      adminCtrl,
+      sessions,
+      markets,
+    });
+
+    res.json({
+      success: result.success,
+      command: {
+        original: command,
+        parsed,
+        source: parsed.source,
+        confidence: parsed.confidence,
+      },
+      result: result.success ? result : undefined,
+      error: result.success ? undefined : result.error,
+    });
+  } catch (err) {
+    console.error('[ai-command] Error:', err.message);
+    res.status(500).json({ error: `Command execution failed: ${err.message}` });
+  }
+});
+
 // ─────────────────────────────────────────
 // START
 // ─────────────────────────────────────────
@@ -1151,6 +1294,15 @@ function onServerStarted() {
   worker.start();
   if (SERVER_CONFIG.BOT_ENABLED) bot.start();
 
+  // Initialize and start self-healing monitor
+  selfHealer.adminCtrl = adminCtrl;
+  selfHealer.treasury = treasury;
+  selfHealer.worker = worker;
+  selfHealer.bot = bot;
+  selfHealer.sessions = sessions;
+  selfHealer.markets = markets;
+  selfHealer.start();
+
   // Flush publisher queue every minute
   publisherFlushInterval = setInterval(() => publisher.flushQueue(), 60_000);
 }
@@ -1180,6 +1332,7 @@ function shutdown(code = 0) {
   bot.stop();
   worker.stop();
   treasury.stop();
+  selfHealer.stop();
   if (publisherFlushInterval) clearInterval(publisherFlushInterval);
   stateStore.saveNow();
 

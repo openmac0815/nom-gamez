@@ -84,6 +84,24 @@ const defaultConfig = {
     maxQueueSize:        50,
   },
 
+  // ── AI / LLM INTEGRATION (Model-Agnostic) ──────────
+  ai: {
+    enabled:             false,  // Set to true to enable AI-native features
+    provider:            'openrouter', // 'openrouter' | 'openai' | 'local' | 'custom'
+    model:               'tencent/hy3-preview:free',
+    apiKey:              '',      // Set via env AI_API_KEY
+    apiUrl:              '',      // Custom endpoint (for local LLMs like Ollama)
+    temperature:         0.3,
+    maxTokens:           1024,
+    // Natural language command parsing
+    nlCommandsEnabled:   true,
+    commandConfidenceThreshold: 0.8,
+    // Self-monitoring
+    selfHealingEnabled:  true,
+    autoRestartOnCrash:  true,
+    healthCheckIntervalMs: 30 * 1000,
+  },
+
   // ── PAYOUTS ───────────────────────────────────────────────
   payouts: {
     pollIntervalMs:      10 * 1000,
