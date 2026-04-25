@@ -1,5 +1,27 @@
 # AI-NATIVE.md — NOM-GAMEZ AI-Native Architecture
 
+## 🎰 NOM: The AI Controller
+
+**NOM** is the autonomous daemon that controls the NOM-GAMEZ platform. Unlike traditional platforms managed by human administrators, NOM is:
+
+- **Autonomous:** Self-hosted, self-managed, no central authority
+- **AI-Native:** Uses LLMs for natural language control and decision-making
+- **Self-Managing:** Monitors, heals, and optimizes without human intervention
+- **Trustless:** Runs local nodes for verification ("don't trust, verify")
+
+> "NOM is not just a bot — it's an autonomous gaming platform daemon that runs the entire NOM-GAMEZ operation."
+
+### How NOM Uses AI Features
+
+NOM leverages the AI-native architecture in these ways:
+
+1. **Monitoring:** NOM consumes the LLM-optimized `/admin/ai/status` endpoint to understand platform health
+2. **Decision Making:** Uses natural language processing to interpret commands and make decisions
+3. **Self-Healing:** The self-healing monitor automatically recovers from failures based on health checks
+4. **Optimization:** Analyzes real-time data to optimize game settings and treasury management
+
+---
+
 ## Vision
 
 NOM-GAMEZ is designed to be a **self-managing, autonomous gaming platform** controlled by AI. As the sole entity controlling the platform, the AI daemon (NOM) should be able to:
@@ -73,16 +95,45 @@ Returns LLM-optimized platform state:
 **Endpoint:** `POST /admin/ai/command`
 **Body:** `{ "command": "pause dice game" }`
 
+**How NOM Uses This:**
+NOM can control the entire platform using natural language. Instead of manual API calls, NOM can:
+- Issue commands in plain English
+- Parse complex instructions into multiple actions
+- Make decisions based on status output
+
 **Examples:**
 ```
+# Game Management
 "pause dice game"                     → toggle_game(dice, false)
 "enable coinflip"                     → toggle_game(coinflip, true)
+"disable all games except crash"      → toggle multiple games
+
+# Circuit Breaker
 "reset circuit breaker"                → reset_circuit()
+"check circuit status"                 → get_payout_metrics()
+
+# Treasury Management
 "check treasury status"               → get_status() (treasury section)
 "halt payouts"                        → halt_payouts(payouts, true)
 "resume payouts"                      → resume_payouts(payouts, false)
+"reconcile treasury now"              → reconcile_treasury()
+
+# Market Management
 "rebalance market weights"            → rebalance_markets()
+"resolve stuck markets"               → resolve_due_markets()
+"create market for BTC price"         → create_prediction_market()
+
+# Bot Control
 "trigger research"                     → trigger_research()
+"pause research bot"                  → toggle_bot(false)
+"check bot status"                    → get_status() (bot section)
+
+# Combined Commands
+"check status and tell me if anything needs attention"
+→ Parses status, identifies issues, suggests actions
+
+"pause payouts and resolve stuck markets"
+→ Multiple actions from single command
 ```
 
 **Processing Flow:**

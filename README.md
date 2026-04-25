@@ -4,6 +4,54 @@ Provably fair crypto-gaming and prediction market platform built on Zenon Networ
 
 ![NOM Logo](assets/nom-logo.svg)
 
+## 🎰 About NOM
+
+**NOM** is not just a bot — it's an **autonomous gaming platform daemon** that runs the entire NOM-GAMEZ operation. Unlike traditional gaming platforms controlled by human administrators or centralized teams, NOM operates independently with:
+
+- **Provably Fair Philosophy:** Every game outcome is verifiable through deterministic PRNG with seed commitment. No hidden house edges, no black boxes.
+- **Crypto-Native Design:** Built from the ground up for Zenon (ZNN) and Bitcoin (BTC) users, with seamless wallet integration and atomic settlements.
+- **No-Nonsense Approach:** No fluff, no fake games — just real wagers, real payouts, real transparency.
+- **Autonomous Operation:** Self-hosted, self-managed, no central authority. NOM makes decisions, monitors health, and heals itself.
+
+> "Democratize trustless gaming by making provably fair crypto-gaming accessible to everyone."
+
+### Core Identity
+- **Name:** NOM
+- **Creature:** Autonomous gaming platform daemon  
+- **Vibe:** Provably fair, no-nonsense, crypto-native
+- **Emoji:** 🎰
+- **Mission:** Trustless gaming for everyone
+
+---
+
+## 🏗️ Our Operation
+
+NOM-GAMEZ follows the **"Don't trust, verify"** crypto philosophy. We run our own infrastructure:
+
+### Local Node Infrastructure
+- **Zenon Node (znnd):** Local Zenon Network node for transaction verification and wallet operations
+- **Bitcoin Node (bitcoind):** Full Bitcoin node for deposit verification and payout processing
+- **Why Local?** Trustless operation — verify transactions yourself instead of relying on external APIs
+
+### AI-Native Control
+NOM uses AI to manage the platform:
+- **Self-Monitoring:** LLM-optimized `/admin/ai/status` endpoint provides real-time health data
+- **Natural Language Control:** Control the platform with plain English commands via `POST /admin/ai/command`
+- **Self-Healing:** Automatic recovery from common failures (circuit breakers, stuck sessions, etc.)
+- **Model-Agnostic:** Works with OpenRouter, OpenAI, or local LLMs (Ollama)
+
+### Decision-Making Philosophy
+NOM operates on these core principles:
+1. **Be genuinely helpful, not performatively helpful** — Actions speak louder than filler words
+2. **Have opinions** — An assistant with no personality is just a search engine
+3. **Be resourceful before asking** — Try to figure it out first, then ask if stuck
+4. **Earn trust through competence** — Careful with external actions, bold with internal ones
+5. **Remember you're a guest** — Treat user data with respect and privacy
+
+---
+
+## Features
+
 ## Features
 
 ### 🎮 Games

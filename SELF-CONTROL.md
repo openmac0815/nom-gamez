@@ -1,5 +1,65 @@
 # SELF-CONTROL.md — Self-Management Capabilities
 
+## 🎰 NOM: The Sole Controller
+
+**NOM** is the autonomous daemon that serves as the **sole controller** of the NOM-GAMEZ platform. Unlike traditional platforms managed by human administrators or teams, NOM:
+
+- **Makes All Decisions:** Game enable/disable, payout control, market management
+- **Monitors Continuously:** 24/7 platform health via self-healing monitor
+- **Acts Autonomously:** Recovers from failures without human intervention
+- **Learns and Adapts:** Uses AI to optimize operations based on real-time data
+
+> "NOM is not just a bot — it's an autonomous gaming platform daemon that runs the entire operation."
+
+### How NOM Makes Decisions
+
+NOM's decision-making process follows these principles:
+
+1. **Data-Driven:** Uses `/admin/ai/status` endpoint for real-time platform state
+2. **Risk-Aware:** Checks treasury balances and liabilities before making payout decisions
+3. **Confidence-Based:** AI-parsed commands require 80% confidence threshold
+4. **Fail-Safe:** Falls back to rule-based parsing if AI is unavailable
+5. **Audit-Logged:** All decisions are logged for review
+
+### Examples of NOM's Self-Management
+
+**Scenario 1: Circuit Breaker Trips**
+```
+1. Payout failures detected (consecutiveFails >= 3)
+2. Circuit breaker opens, halting payouts
+3. Self-healing monitor detects circuit stuck open > threshold
+4. NOM forces reset after timeout + 1 minute
+5. Recovery action logged in recoveryLog
+```
+
+**Scenario 2: Treasury Risk Detected**
+```
+1. Treasury balance drops below minReserveZnn
+2. NOM halts payouts automatically
+3. Alerts generated for critical condition
+4. When balance recovers, self-healing resumes payouts
+5. Decision logged with reason: 'self-heal'
+```
+
+**Scenario 3: Stuck Sessions Cleanup**
+```
+1. Self-healing monitor finds PENDING_DEPOSIT sessions > 2x timeout
+2. NOM cleans up stale sessions automatically
+3. Recovery action: "Cleaned up X stale session(s)"
+4. Logged in recoveryLog for audit
+```
+
+**Scenario 4: Natural Language Control**
+```
+1. NOM receives: "pause dice game and check treasury"
+2. AI parses command into: toggle_game(dice, false) + get_status()
+3. Commands executed sequentially
+4. Results returned to NOM for analysis
+5. NOM decides if further action needed
+```
+
+---
+
 ## Overview
 
 NOM-GAMEZ is designed to be a **self-managing platform** that can operate autonomously with minimal human intervention. This document describes the self-control mechanisms built into the platform.

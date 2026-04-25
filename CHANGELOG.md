@@ -5,6 +5,33 @@ All notable changes to the NOM-GAMEZ project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.0] - 2026-04-25
+
+### Added
+- **Documentation:** NOM identity documented in new NOM.md file
+- **Documentation:** Operation documentation (OPERATION.md) with infrastructure overview
+- **Documentation:** "About NOM" section added to README.md
+- **Documentation:** "Our Operation" section added to README.md
+- **AI-Native:** NOM's identity as AI controller added to AI-NATIVE.md
+- **Self-Control:** NOM's role as sole controller documented in SELF-CONTROL.md
+- **Operation:** Local node setup (Zenon + Bitcoin) documented in OPERATION.md
+- **Operation:** Self-healing capabilities documented with code examples
+- **Operation:** Docker infrastructure documented with healthchecks
+
+### Changed
+- **README:** Added NOM identity section at top
+- **README:** Added operation philosophy (don't trust, verify)
+- **AI-NATIVE:** Added NOM's role and how NOM uses AI features
+- **SELF-CONTROL:** Added NOM's decision-making philosophy and examples
+- **Documentation:** All docs now reference NOM as autonomous daemon
+
+### Documentation
+- NOM.md: Full bio, personality traits, operational guidelines
+- OPERATION.md: Infrastructure, Docker setup, self-healing details
+- Updated all docs to reflect NOM's autonomous operation
+
+---
+
 ## [2.2.0] - 2026-04-25
 
 ### Added
