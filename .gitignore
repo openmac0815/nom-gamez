@@ -1,7 +1,38 @@
+# Environment variables (CRITICAL - no secrets exposed)
+nomgamez-backend/.env
+*.env
+.env.*
+
 # Zips
 *.zip
 repo_remote_check/
 
+# Dependencies
+node_modules/
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Build outputs
+dist/
+build/
+.vite/
+
 # OS
 .DS_Store
 Thumbs.db
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Test coverage
+coverage/
+.nyc_output/
