@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NOM-GAMEZ — Fairness Verification</title>
+  <style>
+    body { font-family: monospace; background: #0a0a0a; color: #0f0; padding: 20px; }
+    .container { max-width: 800px; margin: 0 auto; }
+    h1 { color: #0f0; border-bottom: 1px solid #0f0; padding-bottom: 10px; }
+    .field { margin: 10px 0; }
+    label { display: block; color: #0a0; margin-bottom: 5px; }
+    input, select { background: #111; color: #0f0; border: 1px solid #0f0; padding: 8px; width: 100%; box-sizing: border-box; }
+    button { background: #0f0; color: #000; border: none; padding: 10px 20px; cursor: pointer; font-weight: bold; margin-top: 10px; }
+    button:hover { background: #0a0; }
+    .result { margin-top: 20px; padding: 15px; border: 1px solid #0f0; background: #111; }
+    .valid { color: #0f0; }
+    .invalid { color: #f00; }
+    .hash { word-break: break-all; font-size: 12px; color: #0a0; }
+    .links { margin-top: 20px; }
+    a { color: #0f0; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🎰 NOM-GAMEZ — Provably Fair Verification</h1>
+    <p>Enter the session details below to verify any game outcome independently.</p>
+
+    <div class="field">
+      <label>Server Seed (revealed after round):</label>
+      <input type="text" id="serverSeed" placeholder="64-char hex" />
+    </div>
+
+    <div class="field">
+      <label>Client Seed (your seed):</label>
+      <input type="text" id="clientSeed" placeholder="any string" />
+    </div>
+
+    <div class="field">
+      <label>Nonce (round number):</label>
+      <input type="number" id="nonce" value="1" min="0" />
+    </div>
+
+    <div class="field">
+      <label>Game:</label>
+      <select id="game">
+        <option value="dice">Dice</option>
+        <option value="coinflip">Coinflip</option>
+        <option value="roulette">Roulette</option>
+        <option value="crash">Crash</option>
+        <option value="slots">Slots</option>
+      </select>
+    </div>
+
+    <button onclick="verify()">Verify Outcome</button>
+
+    <div id="result"></div>
+
+    <div class="links">
+      <p><strong>How it works:</strong></p>
+      <ul>
+        <li>Server commits to SHA256(serverSeed) at session start</li>
+        <li>You provide clientSeed + nonce</li>
+        <li>Outcome = HMAC-SHA256(serverSeed, clientSeed:nonce:game)</li>
+        <li>After the round, server reveals serverSeed for verification</li>
+      </ul>
+      <p>
+        <a href="/">← Back to Game</a> |
+        <a href="https://github.com/openmac0815/nom-gamez" target="_blank">GitHub</a>
+      </p>
+    </div>
+  </div>
+
+  <script>
+    // Parse URL params: ?serverSeed=...&clientSeed=...&nonce=...&game=...
+    (function() {
+      const params = new URLSearchParams(window.location.search);
+      if (params.has('serverSeed')) document.getElementById('serverSeed').value = params.get('serverSeed');
+      if (params.has('clientSeed')) document.getElementById('clientSeed').value = params.get('clientSeed');
+      if (params.has('nonce')) document.getElementById('nonce').value = params.get('nonce');
+      if (params.has('game')) document.getElementById('game').value = params.get('game');
+    })();
+
+    async function verify() {
+      const serverSeed = document.getElementById('serverSeed').value.trim();
+      const clientSeed = document.getElementById('clientSeed').value;
+      const nonce = document.getElementById('nonce').value;
+      const game = document.getElementById('game').value;
+
+      if (!serverSeed || serverSeed.length !== 64) {
+        showResult(false, 'Invalid server seed (must be 64-char hex)');
+        return;
+      }
+
+      // Compute HMAC-SHA256(serverSeed, clientSeed:nonce:game)
+      const message = `${clientSeed}:${nonce}:${game}`;
+      const key = hexToBytes(serverSeed);
+      const msg = new TextEncoder().encode(message);
+
+      const cryptoKey = await crypto.subtle.importKey('raw', key, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+      const signature = await crypto.subtle.sign('HMAC', cryptoKey, msg);
+      const hash = bytesToHex(new Uint8Array(signature));
+
+      // Compute outcome based on game
+      let outcome = '';
+      if (game === 'dice' || game === 'roulette') {
+        const intVal = parseInt(hash.slice(0, 8), 16) % (game === 'dice' ? 100 : 37);
+        outcome = `Roll/Number: ${intVal}`;
+      } else if (game === 'coinflip') {
+        const flip = parseInt(hash.slice(0, 8), 16) % 2 === 0 ? 'heads' : 'tails';
+        outcome = `Flip: ${flip}`;
+      } else if (game === 'crash') {
+        const r = parseInt(hash.slice(0, 8), 16) / 0x100000000;
+        const crashPoint = Math.max(1.0, 1.0 + Math.floor(r * 9900) / 100).toFixed(2);
+        outcome = `Crash Point: ${crashPoint}x`;
+      } else if (game === 'slots') {
+        const symbols = ['🍒', '🍋', '🍊', '⭐', '💎', '7️⃣'];
+        const r1 = parseInt(hash.slice(0, 2), 16) % 6;
+        const r2 = parseInt(hash.slice(2, 4), 16) % 6;
+        const r3 = parseInt(hash.slice(4, 6), 16) % 6;
+        outcome = `Reels: ${symbols[r1]} ${symbols[r2]} ${symbols[r3]}`;
+      }
+
+      const commit = await sha256(hexToBytes(serverSeed));
+      showResult(true, `
+        <div>✅ <strong>Verification Complete</strong></div>
+        <div class="hash">Server Seed: ${serverSeed}</div>
+        <div class="hash">Commit (SHA256): ${bytesToHex(commit)}</div>
+        <div class="hash">Client Seed: ${clientSeed}</div>
+        <div>Nonce: ${nonce}</div>
+        <div>Game: ${game}</div>
+        <div class="hash">HMAC-SHA256: ${hash}</div>
+        <div style="margin-top:10px; font-size:18px;"><strong>${outcome}</strong></div>
+      `);
+    }
+
+    function showResult(valid, html) {
+      const el = document.getElementById('result');
+      el.className = 'result ' + (valid ? 'valid' : 'invalid');
+      el.innerHTML = typeof html === 'string' ? html : html;
+    }
+
+    function hexToBytes(hex) {
+      const bytes = new Uint8Array(hex.length / 2);
+      for (let i = 0; i < hex.length; i += 2) {
+        bytes[i/2] = parseInt(hex.substr(i, 2), 16);
+      }
+      return bytes;
+    }
+
+    function bytesToHex(bytes) {
+      return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+    }
+
+    async function sha256(data) {
+      const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+      return new Uint8Array(hashBuffer);
+    }
+  </script>
+</body>
+</html>

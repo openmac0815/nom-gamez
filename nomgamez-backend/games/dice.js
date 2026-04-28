@@ -1,11 +1,13 @@
 function createDicePlugin() {
+  const { outcome, toInt } = require('../lib/fair');
+
   const modes = {
     range:   { id: 'range', label: '40-60', check: (r) => r >= 40 && r <= 60 },
     over50:  { id: 'over50', label: 'Over 50', check: (r) => r > 50 },
     under50: { id: 'under50', label: 'Under 50', check: (r) => r < 50 },
     lucky77: { id: 'lucky77', label: 'Lucky 77', check: (r) => r >= 70 && r <= 80 },
     odd:     { id: 'odd', label: 'Odd', check: (r) => r % 2 !== 0 },
-    jackpot: { id: 'jackpot', label: 'Jackpot', check: (r) => r === 100 },
+    jackpot:  { id: 'jackpot', label: 'Jackpot', check: (r) => r === 100 },
   };
 
   return {
@@ -15,15 +17,15 @@ function createDicePlugin() {
       active: true,
       payoutMultiplier: 10,
       houseEdgePct: 10,
-      description: 'Roll d100. Six win modes. Provably fair.',
+      description: 'Roll d100. Six win modes. Provably fair (commit-reveal).',
       minBet: 0.1,
       maxBet: 10.0,
     },
     verification: {
-      scheme: 'deterministic-v1',
+      scheme: 'commit-reveal-v1',
       proofType: 'mode-proof',
       status: 'active',
-      note: 'Submit selected dice mode so the server can recompute the deterministic roll',
+      note: 'Server commits H(serverSeed); client supplies clientSeed+nonce; outcome = HMAC-SHA256(serverSeed, clientSeed:nonce:dice)',
     },
     getSessionMetadata() {
       return {
@@ -40,7 +42,13 @@ function createDicePlugin() {
       const mode = modes[modeId];
       if (!mode) return { valid: false, reason: 'Invalid dice mode proof' };
 
-      const roll = tools.seededInt(session.id, 'dice:roll', 100);
+      // Commit-reveal PRNG: HMAC-SHA256(serverSeed, clientSeed:nonce:label)
+      const serverSeed = session.serverSeed;
+      const clientSeed = session.clientSeed || '';
+      const nonce = session.nonce || 0;
+      const hash = outcome(serverSeed, clientSeed, nonce, 'dice');
+      const roll = toInt(hash, 100);
+
       if (proof.claimedRoll !== undefined && Number(proof.claimedRoll) !== roll) {
         return { valid: false, reason: `Dice proof mismatch: expected roll ${roll}` };
       }

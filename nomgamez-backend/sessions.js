@@ -2,6 +2,7 @@
 // Each session tracks: player, bet, deposit status, game outcome, payout
 
 const crypto = require('crypto');
+const { generateServerSeed, commit } = require('./lib/fair');
 
 // Session states
 const STATE = {
@@ -43,8 +44,10 @@ class SessionManager {
   /**
    * Create a new game session
    */
-  create({ playerAddress, gameId, betAmount, depositTimeout, isTestMode = false }) {
+  create({ playerAddress, gameId, betAmount, depositTimeout, isTestMode = false, clientSeed = null }) {
     const sessionId = crypto.randomBytes(16).toString('hex');
+    const serverSeed = generateServerSeed();
+    const serverSeedCommit = commit(serverSeed);
     const session = {
       id: sessionId,
       playerAddress,
@@ -64,11 +67,17 @@ class SessionManager {
       gameScore: null,
       isTestMode: Boolean(isTestMode),
       pollCount: 0,
-      log: [`[${ts()}] Session created — ${gameId} — bet: ${betAmount} ZNN${isTestMode ? ' — TEST MODE' : ''}`],
+      // Provably-fair fields (commit-reveal)
+      serverSeed,          // Revealed after round
+      serverSeedCommit,    // Shared at session creation
+      clientSeed: clientSeed || '', // Player-supplied seed (if any)
+      nonce: 0,            // Incremented per game round
+      log: [`[${ts()}] Session created — ${gameId} — bet: ${betAmount} ZNN${isTestMode ? ' — TEST MODE' : ''}`, `
+        [${ts()}] Fairness: commit=${serverSeedCommit.slice(0, 16)}...`],
     };
     this.sessions.set(sessionId, session);
     this._store?.upsertSession(session);
-    console.log(`[session] Created ${sessionId} | ${playerAddress} | ${gameId} | ${betAmount} ZNN`);
+    console.log(`[session] Created ${sessionId} | ${playerAddress} | ${gameId} | ${betAmount} ZNN | commit: ${serverSeedCommit.slice(0, 16)}...`);
     this._persist?.();
     return session;
   }
@@ -127,6 +136,9 @@ class SessionManager {
    * Record game result
    */
   gameEnded(sessionId, { won, score, details = null }) {
+    const s = this.sessions.get(sessionId);
+    if (!s) return null;
+    s.nonce = (s.nonce || 0) + 1; // Increment nonce for next round
     return this.setState(sessionId, won ? STATE.GAME_WON : STATE.GAME_LOST, {
       gameResult: won ? 'WIN' : 'LOSS',
       gameScore: score,
@@ -146,6 +158,33 @@ class SessionManager {
     const s = this.sessions.get(sessionId);
     if (!s) return null;
     s.quote = quote;
+    this._store?.upsertSession(s);
+    this._persist?.();
+    return s;
+  }
+
+  /**
+   * Reveal the server seed for verification
+   * Called after game round completes
+   */
+  revealServerSeed(sessionId) {
+    const s = this.sessions.get(sessionId);
+    if (!s) return null;
+    return {
+      serverSeed: s.serverSeed,
+      serverSeedCommit: s.serverSeedCommit,
+      clientSeed: s.clientSeed,
+      nonce: s.nonce,
+    };
+  }
+
+  /**
+   * Set client seed for a session (player-provided)
+   */
+  setClientSeed(sessionId, clientSeed) {
+    const s = this.sessions.get(sessionId);
+    if (!s) return null;
+    s.clientSeed = clientSeed || '';
     this._store?.upsertSession(s);
     this._persist?.();
     return s;

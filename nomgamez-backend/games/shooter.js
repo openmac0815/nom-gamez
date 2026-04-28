@@ -1,18 +1,6 @@
-/**
- * Shooter Game Plugin - Space Shooter with Provably Fair Deterministic Gameplay
- * 
- * Implements replayable determinism using a server-committed seed and client inputs.
- * Game state is fully deterministic given the initial seed and player input log,
- * allowing for verification of results without trusting the server.
- */
+const crypto = require("crypto");
+const { outcome, toFloat } = require("../lib/fair");
 
-/**
- * Seeded Pseudo-Random Number Generator (xoshiro128** algorithm)
- * Provides deterministic random numbers for game logic given a fixed seed.
- * @param {string} seed - Hex string seed to initialize the PRNG
- * @returns {object} PRNG instance with next() method
- */
-function createSeededPRNG(seed) {
   // Convert hex seed to 4 32-bit integers for xoshiro128** state
   const seedBuffer = Buffer.from(seed, 'hex');
   let s = new Uint32Array(4);
@@ -298,18 +286,24 @@ function createShooterPlugin() {
      * @param {object} params.claimedResult - Client-claimed result
      * @returns {object} Verification result
      */
-    verifyResult(params) {
-      const { serverSeed, inputLog, claimedResult } = params;
+    verifyResult(session, payload, tools) {
+      const proof = payload.proof || {};
+      const { serverSeed, inputLog, claimedResult } = proof;
       
-      // Replay game session
-      const session = new ShooterSession(serverSeed, this.defaultConfig);
+      if (!serverSeed || !Array.isArray(inputLog)) {
+        return { valid: false, reason: 'Missing serverSeed or inputLog in proof' };
+      }
+      
+      // Replay game session using committed seed
+      const ShooterSession = require('./shooter').ShooterSession;
+      const gameSession = new ShooterSession(serverSeed, this.defaultConfig);
       
       // Replay all inputs
       inputLog.forEach(input => {
-        session.update([input]);
+        gameSession.update([input]);
       });
 
-      const finalState = session.getState();
+      const finalState = gameSession.getState();
       
       // Check if claimed result matches replayed result
       const valid = finalState.score === claimedResult.score && 

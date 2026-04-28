@@ -296,6 +296,9 @@ app.use(express.json({ limit: jsonLimit }));
 // Logger
 app.use((req, res, next) => {
   if (!req.path.startsWith('/feed/events')) // don't log SSE polling
+\n// Static files (verification page, etc.)
+app.use(express.static(path.join(__dirname, "public")));
+
     res.on('finish', () => logger.request(req, res));
   next();
 });
@@ -382,6 +385,7 @@ app.post('/session/create', async (req, res) => {
       preferredPayoutAsset:  req.body?.preferredPayoutAsset,
       preferredPayoutAddress: req.body?.preferredPayoutAddress,
       testMode:              req.body?.testMode,
+      clientSeed:            req.body?.clientSeed || null,
     });
 
     res.json({
@@ -402,7 +406,11 @@ app.post('/session/create', async (req, res) => {
         : [`Send exactly ${quote.depositAmount} ${session.depositAsset} to ${depositAddress}`,
            req.body?.playerAddress ? `From your address: ${req.body.playerAddress}` : 'Keep the txid handy',
            `Session expires in ${SERVER_CONFIG.DEPOSIT_TIMEOUT}s`],
-      verification,
+      verification: {
+        ...verification,
+        serverSeedCommit: session.serverSeedCommit,
+        clientSeed: session.clientSeed || '',
+      },
       gameMetadata,
     });
   } catch (err) {
@@ -902,6 +910,20 @@ app.get('/admin/health', (req, res) => {
   health.payoutLock = { heldKeys: payoutLock.size() };
   res.json(health);
 });
+\n// GET /session/:id/reveal - Reveal server seed for verification
+app.get("/session/:id/reveal", validateSessionId, (req, res) => {
+  const data = sessions.revealServerSeed(req.params.id);
+  if (!data) return res.status(404).json({ error: "Session not found or no seed" });
+  res.json({
+    sessionId: req.params.id,
+    serverSeed: data.serverSeed,
+    serverSeedCommit: data.serverSeedCommit,
+    clientSeed: data.clientSeed,
+    nonce: data.nonce,
+    verificationUrl: `/verify/${req.params.id}`,
+  });
+});
+
 
 /**
  * GET /admin/alerts
